@@ -19,7 +19,7 @@ do
 	mkdir $folder
 	cd $folder
 
-	for m in 2 4
+	for m in 1 2 4 6
 	do
 		mkdir m_$m
 		cd m_$m
