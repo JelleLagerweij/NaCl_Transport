@@ -1,0 +1,21 @@
+
+
+for i in 18 36 76 108
+do 
+N=$(expr 1000);    #Number of water molecules 
+
+mkdir $i
+cp ./force* $i/; cp ./water.xyz $i/;cp ./*in $i/; cp ./params.ff $i/;
+cp ./Na.xyz $i/; cp ./Cl.xyz $i/;
+cd $i;
+
+~/la*18/fftool/fftool $N water.xyz $i Na.xyz $i Cl.xyz -r 50 > /dev/null
+~/la*18/packmol*/packmol < pack.inp > packmol.out
+~/la*18/fftool/fftool $N water.xyz $i Na.xyz $i Cl.xyz -r 50 -l > /dev/null
+
+rm -f in.lmp
+sed -i '19,26d' ./data.lmp
+rm -rf *xyz pa*
+cd ../
+
+done
