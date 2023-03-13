@@ -1,0 +1,2080 @@
+LAMMPS (16 Mar 2018)
+####################################################
+# NaCl Transport properties
+#################### SETTING UP ####################
+units real
+dimension 3
+newton on
+boundary p p p
+atom_style full
+
+#################### VARIABLES ####################
+variable Temp equal 298.15    # Temperature in K
+variable Pres equal 1    # Pressure in atm.
+
+variable RandomSeed equal 70 # The random seed for velocity
+variable tstep equal 2 # timestep in fs
+
+#################### NPT ####################
+variable Ninptpre equal 5000 # Pre-initialize the NPT ensemble (very small timesteps)
+variable Ninpt equal 5000000  # Initialize the NPT ensemble
+variable Npnpt equal 5000000  # Production in the NPT ensemble (volume)
+
+#################### NVT ####################
+variable Ninvtpre equal 5000  # Pre-initialize the NVT ensemble (very small timesteps)
+variable Ninvt equal 2000000  # Initialize the NVT ensemble 2.5Mstep
+variable Nrun equal 100000000  # production in the NVT ensemble (Transport properties)
+
+variable Nf equal 100000      # Nfreq (fix ave/time and thermo)
+variable Ne equal  1          # Nevery (fix ave/time)
+variable Nr equal ${Nf}/${Ne} # Nrepeat (fix ave/time)
+variable Nr equal 100000/${Ne} 
+variable Nr equal 100000/1 
+variable Nd equal ${Nf} 	  # Frequency of outputting positions of atoms in the NVT ensemble
+variable Nd equal 100000 	  
+variable NBR equal ${Npnpt}/100 # Block averaging for density (NPT)
+variable NBR equal 5000000/100 
+
+variable nb equal 10          # Number of blocks (fix ordern)
+variable nbe equal 20         # Number of block elements (fix ordern)
+variable Nvisc equal 5        # Nevery for viscosity (fix ordern: sample data at (Nvisc*2))
+variable Ncond equal 5        # Nevery for Tconductivity (fix ordern: sample data at (Ncond*2))
+variable Ndiff equal 500     # Nevery for diffusivity (fix ordern: sample data at (Ndiff))
+variable Nwrit equal 50000   # Nwrite for transport properties (fix ordern: write every (Nwrit))
+
+variable Nrdfe equal 1000     # Nevery for RDF (fix ave/time)
+variable Nrdfw equal 1000     # Nwrite for RDF (compute rdf/ext: write every (Nrdfw*Nrdfe))
+variable binnum equal 2000    # Number of bins for RDF
+
+#################### ATOM DEFINITION and FORCEFIELD ####################
+read_data ./data.lmp                     # read the positions
+  orthogonal box = (0 0 0) to (25.8933 25.8933 25.8933)
+  4 by 4 by 8 MPI processor grid
+  reading atoms ...
+  1685 atoms
+  scanning bonds ...
+  2 = max bonds/atom
+  scanning angles ...
+  1 = max angles/atom
+  reading bonds ...
+  1110 bonds
+  reading angles ...
+  555 angles
+  2 = max # of 1-2 neighbors
+  1 = max # of 1-3 neighbors
+  1 = max # of 1-4 neighbors
+  2 = max # of special neighbors
+include ./forcefield.data                # read the force field
+#--------INTERMOLECULAR POTENTIAL -------------------#
+# --------Developed for MadridT NaCl + TIP4P/2005-----#
+
+mass 1 15.9994	# Ow
+mass 2 1.008	# Hw
+mass 3 22.9898	# Na
+mass 4 35.453	# Cl
+
+
+pair_style lj/cut/tip4p/long 1 2 1 1 0.1546 10.0
+kspace_style pppm/tip4p 1.0e-5
+pair_modify mix arithmetic tail yes # ATC and Lorentz-Berthelot combining rules
+
+#-----------------Combinations----------------------------
+# atomtype atomtype epsilon sigma
+
+pair_coeff 1 1 0.185207 3.15890    # Ow-Ow
+pair_coeff 1 2 0.000000 0.00000    # Ow-Hw
+pair_coeff 1 3 0.189624 2.38725    # Ow-Na
+pair_coeff 1 4 0.014814 4.07631    # Ow-Cl
+
+pair_coeff 2 2 0.000000 0.00000    # Hw-Hw
+pair_coeff 2 3 0.000000 0.00000    # Hw-Na
+pair_coeff 2 4 0.000000 0.00000    # Hw-Cl
+
+pair_coeff 3 3 0.351902 2.21737    # Na-Na
+pair_coeff 3 4 0.343904 2.58012    # Na-Cl
+
+pair_coeff 4 4 0.018385 4.69906    # Cl-Cl
+
+bond_style  harmonic
+bond_coeff 1 2000 0.9572           # Ow-Hw
+
+angle_style harmonic
+angle_coeff 1 200 104.52           # H-Ow-H
+
+#dihedral_style none
+#improper_style none
+
+set type 1 charge -1.1128          # O
+  555 settings made for charge
+set type 2 charge +0.5564          # OH
+  1110 settings made for charge
+set type 3 charge +0.7500          # Na
+  10 settings made for charge
+set type 4 charge -0.7500          # Cl
+  10 settings made for charge
+
+#################### INITIALIZATION ####################
+group wat type 1		# O water
+555 atoms in group wat
+group Na type 3			# Sodium ion
+10 atoms in group Na
+group Cl type 4			# Chlorine ion
+10 atoms in group Cl
+
+# neigbor lists
+neighbor 2.0 bin
+neigh_modify every 1 delay 0 check yes
+
+# velocity-Verlet integrator
+run_style verlet
+
+# initializing velocities
+velocity all create ${Temp} ${RandomSeed}
+velocity all create 298.15 ${RandomSeed}
+velocity all create 298.15 70
+
+# rate of writing thermal properties to the log file
+thermo_style custom step density temp press etotal
+thermo_modify flush yes
+thermo ${Nf}
+thermo 100000
+
+#################### 2) Initialize the NPT ensemble ####################
+######### Go to the correct temperature now ant initiate that ##########
+fix constrain all shake 1.0e-6 1000 0 b 1 a 1
+  0 = # of size 2 clusters
+  0 = # of size 3 clusters
+  0 = # of size 4 clusters
+  555 = # of frozen angles
+fix integrate all npt temp ${Temp} ${Temp} 10.0 iso ${Pres} ${Pres} 100.0
+fix integrate all npt temp 298.15 ${Temp} 10.0 iso ${Pres} ${Pres} 100.0
+fix integrate all npt temp 298.15 298.15 10.0 iso ${Pres} ${Pres} 100.0
+fix integrate all npt temp 298.15 298.15 10.0 iso 1 ${Pres} 100.0
+fix integrate all npt temp 298.15 298.15 10.0 iso 1 1 100.0
+
+
+# Initializing the whole system with very small timesteps in the NPT ensemble
+timestep 0.001
+run ${Ninptpre}
+run 5000
+PPPM initialization ...
+  extracting TIP4P info from pair style
+  using 12-bit tables for long-range coulomb (../kspace.cpp:321)
+  G vector (1/distance) = 0.312602
+  grid = 25 25 25
+  stencil order = 5
+  estimated absolute RMS force accuracy = 0.00326251
+  estimated relative force accuracy = 9.82496e-06
+  using double precision FFTs
+  3d grid and FFT values/proc = 2156 200
+Neighbor list info ...
+  update every 1 steps, delay 0 steps, check yes
+  max neighbors/atom: 2000, page size: 100000
+  master list distance cutoff = 12.3092
+  ghost atom cutoff = 12.3092
+  binsize = 6.1546, bins = 5 5 5
+  1 neighbor lists, perpetual/occasional/extra = 1 0 0
+  (1) pair lj/cut/tip4p/long, perpetual
+      attributes: half, newton on
+      pair build: half/bin/newton
+      stencil: half/bin/3d/newton
+      bin: standard
+Per MPI rank memory allocation (min/avg/max) = 7.883 | 7.973 | 8.161 Mbytes
+Step Density Temp Press TotEng 
+       0    1.0122608    444.71621   -7959273.9    3924.6277 
+    5000   0.96729559    568.82928    42316.443    2787.4269 
+Loop time of 3.36023 on 128 procs for 5000 steps with 1685 atoms
+
+Performance: 0.129 ns/day, 186.679 hours/ns, 1487.994 timesteps/s
+99.2% CPU use with 128 MPI tasks x no OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0.29883    | 0.64446    | 1.1011     |  21.2 | 19.18
+Bond    | 0.00044389 | 0.00054072 | 0.0008995  |   0.0 |  0.02
+Kspace  | 1.2096     | 1.6827     | 2.0125     |  13.3 | 50.08
+Neigh   | 0          | 0          | 0          |   0.0 |  0.00
+Comm    | 0.39038    | 0.43742    | 0.48201    |   3.2 | 13.02
+Output  | 6.2587e-05 | 7.0821e-05 | 0.00012269 |   0.0 |  0.00
+Modify  | 0.44317    | 0.49679    | 0.54926    |   4.0 | 14.78
+Other   |            | 0.09828    |            |       |  2.92
+
+Nlocal:    13.1641 ave 18 max 7 min
+Histogram: 4 5 7 15 22 15 22 16 9 13
+Nghost:    2646.19 ave 2708 max 2598 min
+Histogram: 8 8 19 23 25 10 20 5 6 4
+Neighs:    4998.02 ave 8349 max 2332 min
+Histogram: 4 8 21 31 23 13 9 11 5 3
+
+Total # of neighbors = 639746
+Ave neighs/atom = 379.671
+Ave special neighs/atom = 1.97626
+Neighbor list builds = 0
+Dangerous builds = 0
+timestep 0.01
+run ${Ninptpre}
+run 5000
+PPPM initialization ...
+  extracting TIP4P info from pair style
+  using 12-bit tables for long-range coulomb (../kspace.cpp:321)
+  G vector (1/distance) = 0.311519
+  grid = 25 25 25
+  stencil order = 5
+  estimated absolute RMS force accuracy = 0.00341272
+  estimated relative force accuracy = 1.02773e-05
+  using double precision FFTs
+  3d grid and FFT values/proc = 2156 200
+Per MPI rank memory allocation (min/avg/max) = 7.883 | 7.975 | 8.161 Mbytes
+Step Density Temp Press TotEng 
+    5000   0.96729559    568.82928    2830113.4    2787.4224 
+   10000   0.89496629    340.66898   -4929.9386   -3849.3692 
+Loop time of 3.39774 on 128 procs for 5000 steps with 1685 atoms
+
+Performance: 1.271 ns/day, 18.876 hours/ns, 1471.565 timesteps/s
+99.2% CPU use with 128 MPI tasks x no OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0.23773    | 0.57052    | 0.93866    |  19.1 | 16.79
+Bond    | 0.00045121 | 0.00053769 | 0.00085701 |   0.0 |  0.02
+Kspace  | 1.3697     | 1.7293     | 2.0479     |  11.1 | 50.89
+Neigh   | 0.0010528  | 0.0013718  | 0.001428   |   0.1 |  0.04
+Comm    | 0.37058    | 0.4305     | 0.49974    |   3.8 | 12.67
+Output  | 0.00016069 | 0.00016888 | 0.0002254  |   0.0 |  0.00
+Modify  | 0.48392    | 0.56756    | 0.63385    |   4.5 | 16.70
+Other   |            | 0.09782    |            |       |  2.88
+
+Nlocal:    13.1641 ave 19 max 6 min
+Histogram: 1 5 4 22 15 24 33 13 6 5
+Nghost:    2407.67 ave 2492 max 2341 min
+Histogram: 4 13 20 22 20 19 14 9 3 4
+Neighs:    4399.8 ave 6721 max 1639 min
+Histogram: 1 3 10 21 20 23 18 15 10 7
+
+Total # of neighbors = 563174
+Ave neighs/atom = 334.228
+Ave special neighs/atom = 1.97626
+Neighbor list builds = 6
+Dangerous builds = 0
+timestep 0.1
+run ${Ninptpre}
+run 5000
+PPPM initialization ...
+  extracting TIP4P info from pair style
+  using 12-bit tables for long-range coulomb (../kspace.cpp:321)
+  G vector (1/distance) = 0.309654
+  grid = 25 25 25
+  stencil order = 5
+  estimated absolute RMS force accuracy = 0.00368641
+  estimated relative force accuracy = 1.11015e-05
+  using double precision FFTs
+  3d grid and FFT values/proc = 2156 200
+Per MPI rank memory allocation (min/avg/max) = 7.883 | 8.02 | 8.161 Mbytes
+Step Density Temp Press TotEng 
+   10000   0.89496629    340.66898   -63325.927   -3849.3674 
+   15000    1.0658678    297.33234   -46.703949   -6309.3365 
+Loop time of 4.0106 on 128 procs for 5000 steps with 1685 atoms
+
+Performance: 10.771 ns/day, 2.228 hours/ns, 1246.696 timesteps/s
+99.1% CPU use with 128 MPI tasks x no OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0.35684    | 0.70635    | 1.0967     |  19.2 | 17.61
+Bond    | 0.00045477 | 0.00054424 | 0.00088983 |   0.0 |  0.01
+Kspace  | 1.8202     | 2.2273     | 2.569      |  10.9 | 55.53
+Neigh   | 0.0048644  | 0.0049561  | 0.0050525  |   0.1 |  0.12
+Comm    | 0.39841    | 0.44376    | 0.49335    |   3.4 | 11.06
+Output  | 5.379e-05  | 6.205e-05  | 0.00011436 |   0.0 |  0.00
+Modify  | 0.44729    | 0.50625    | 0.56582    |   4.0 | 12.62
+Other   |            | 0.1214     |            |       |  3.03
+
+Nlocal:    13.1641 ave 19 max 8 min
+Histogram: 8 7 17 17 21 23 17 9 4 5
+Nghost:    2718.75 ave 2777 max 2658 min
+Histogram: 1 9 6 21 23 24 22 15 4 3
+Neighs:    5214.54 ave 8604 max 2611 min
+Histogram: 3 11 23 24 21 18 13 9 2 4
+
+Total # of neighbors = 667461
+Ave neighs/atom = 396.119
+Ave special neighs/atom = 1.97626
+Neighbor list builds = 24
+Dangerous builds = 0
+timestep 0.2
+run ${Ninptpre}
+run 5000
+PPPM initialization ...
+  extracting TIP4P info from pair style
+  using 12-bit tables for long-range coulomb (../kspace.cpp:321)
+  G vector (1/distance) = 0.310913
+  grid = 24 24 24
+  stencil order = 5
+  estimated absolute RMS force accuracy = 0.0037207
+  estimated relative force accuracy = 1.12048e-05
+  using double precision FFTs
+  3d grid and FFT values/proc = 1690 144
+Per MPI rank memory allocation (min/avg/max) = 7.877 | 8.085 | 8.146 Mbytes
+Step Density Temp Press TotEng 
+   15000    1.0658678    297.33234   -4190.4147    -6309.326 
+   20000    1.0343369     291.9795   -548.77587   -6507.8425 
+Loop time of 3.50648 on 128 procs for 5000 steps with 1685 atoms
+
+Performance: 24.640 ns/day, 0.974 hours/ns, 1425.933 timesteps/s
+99.2% CPU use with 128 MPI tasks x no OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0.20722    | 0.71692    | 1.09       |  18.7 | 20.45
+Bond    | 0.00045004 | 0.00053996 | 0.0007797  |   0.0 |  0.02
+Kspace  | 1.3814     | 1.7628     | 2.2608     |  12.2 | 50.27
+Neigh   | 0.0092145  | 0.0094017  | 0.0095715  |   0.1 |  0.27
+Comm    | 0.38118    | 0.44115    | 0.51645    |   4.2 | 12.58
+Output  | 5.2367e-05 | 5.8418e-05 | 8.8124e-05 |   0.0 |  0.00
+Modify  | 0.43244    | 0.50085    | 0.55246    |   4.0 | 14.28
+Other   |            | 0.07475    |            |       |  2.13
+
+Nlocal:    13.1641 ave 19 max 4 min
+Histogram: 1 0 1 1 21 20 48 26 7 3
+Nghost:    2674.09 ave 2708 max 2643 min
+Histogram: 3 5 17 19 31 15 20 11 5 2
+Neighs:    5151.6 ave 8455 max 1191 min
+Histogram: 1 0 5 19 28 26 26 17 4 2
+
+Total # of neighbors = 659405
+Ave neighs/atom = 391.338
+Ave special neighs/atom = 1.97626
+Neighbor list builds = 46
+Dangerous builds = 0
+timestep 0.5
+run ${Ninptpre}
+run 5000
+PPPM initialization ...
+  extracting TIP4P info from pair style
+  using 12-bit tables for long-range coulomb (../kspace.cpp:321)
+  G vector (1/distance) = 0.310191
+  grid = 24 24 24
+  stencil order = 5
+  estimated absolute RMS force accuracy = 0.00383333
+  estimated relative force accuracy = 1.1544e-05
+  using double precision FFTs
+  3d grid and FFT values/proc = 1690 144
+Per MPI rank memory allocation (min/avg/max) = 7.877 | 8.128 | 8.146 Mbytes
+Step Density Temp Press TotEng 
+   20000    1.0343369     291.9795    1245.8832   -6507.8447 
+   25000    1.0332109    297.56932    372.11572    -6568.988 
+Loop time of 3.35011 on 128 procs for 5000 steps with 1685 atoms
+
+Performance: 64.476 ns/day, 0.372 hours/ns, 1492.488 timesteps/s
+99.2% CPU use with 128 MPI tasks x no OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0.37325    | 0.72199    | 1.004      |  17.7 | 21.55
+Bond    | 0.00044666 | 0.00053874 | 0.0008236  |   0.0 |  0.02
+Kspace  | 1.3299     | 1.6312     | 1.9691     |  12.0 | 48.69
+Neigh   | 0.02204    | 0.022487   | 0.022976   |   0.1 |  0.67
+Comm    | 0.3807     | 0.42892    | 0.48242    |   3.4 | 12.80
+Output  | 4.3962e-05 | 4.7142e-05 | 7.8526e-05 |   0.0 |  0.00
+Modify  | 0.41702    | 0.46966    | 0.51309    |   3.8 | 14.02
+Other   |            | 0.07526    |            |       |  2.25
+
+Nlocal:    13.1641 ave 19 max 7 min
+Histogram: 4 5 9 16 18 33 23 8 7 5
+Nghost:    2622.13 ave 2674 max 2562 min
+Histogram: 3 3 10 16 17 29 25 15 5 5
+Neighs:    5030.3 ave 8540 max 2440 min
+Histogram: 4 15 26 23 19 8 15 10 5 3
+
+Total # of neighbors = 643878
+Ave neighs/atom = 382.123
+Ave special neighs/atom = 1.97626
+Neighbor list builds = 109
+Dangerous builds = 0
+reset_timestep 0
+
+# continuing the initialization with the final value of timestep
+unfix integrate
+fix integrate all npt temp ${Temp} ${Temp} 100.0 iso ${Pres} ${Pres} 1000.0
+fix integrate all npt temp 298.15 ${Temp} 100.0 iso ${Pres} ${Pres} 1000.0
+fix integrate all npt temp 298.15 298.15 100.0 iso ${Pres} ${Pres} 1000.0
+fix integrate all npt temp 298.15 298.15 100.0 iso 1 ${Pres} 1000.0
+fix integrate all npt temp 298.15 298.15 100.0 iso 1 1 1000.0
+
+timestep ${tstep}
+timestep 2
+run ${Ninpt}
+run 5000000
+PPPM initialization ...
+  extracting TIP4P info from pair style
+  using 12-bit tables for long-range coulomb (../kspace.cpp:321)
+  G vector (1/distance) = 0.310165
+  grid = 24 24 24
+  stencil order = 5
+  estimated absolute RMS force accuracy = 0.00383749
+  estimated relative force accuracy = 1.15565e-05
+  using double precision FFTs
+  3d grid and FFT values/proc = 1690 144
+Per MPI rank memory allocation (min/avg/max) = 7.877 | 8.137 | 8.146 Mbytes
+Step Density Temp Press TotEng 
+       0    1.0332109    297.56932   -443.03438    -6568.988 
+  100000    1.0343842    301.22547    180.58203   -6523.7022 
+  200000    1.0433959    290.53774   -156.35217   -6501.8541 
+  300000    1.0343953    302.00587    224.55419   -6544.2909 
+  400000    1.0478179    295.03353    -86.77534   -6584.7621 
+  500000     1.015566    305.77641   -700.34149   -6466.0571 
+  600000      1.01772    302.06113   -237.61902   -6548.9493 
+  700000    1.0296734    300.95851   -283.27279   -6535.6026 
+  800000    1.0344355    300.17917   -203.79116   -6498.1865 
+  900000    1.0263402    299.14834   -716.52013   -6498.1036 
+ 1000000     1.020497    302.80121   -564.65718   -6528.0216 
+ 1100000    1.0157861    301.21122   -2.8572538   -6496.7343 
+ 1200000    1.0307882    283.60951   -774.30081   -6529.7777 
+ 1300000    1.0328268    290.76453   -46.997969   -6586.8622 
+ 1400000    1.0323473    310.42226    170.62381   -6514.2721 
+ 1500000     1.053788    289.94268    755.67719   -6521.7567 
+ 1600000    1.0460274    294.95658   -263.62509   -6518.0805 
+ 1700000    1.0342858    291.87676     1571.501   -6515.3383 
+ 1800000     1.028496    300.92742   -41.649054    -6630.645 
+ 1900000     1.034334    286.99365   -570.61239   -6553.4632 
+ 2000000     1.009939    306.04541   -276.07075   -6521.4954 
+ 2100000    1.0171982    312.40236    271.45864   -6527.5777 
+ 2200000    1.0231268    301.93526   -1055.5097   -6489.7269 
+ 2300000    1.0375752    285.61776   -1258.7813    -6604.315 
+ 2400000    1.0328511    308.34758   -800.48744   -6590.8195 
+ 2500000    1.0428839    294.12652    942.04089   -6549.4665 
+ 2600000    1.0453476    303.34405    1857.3829   -6496.9204 
+ 2700000    1.0338003    293.72007   -404.78205   -6583.2354 
+ 2800000    1.0194163    292.91929   -1070.8701   -6519.6203 
+ 2900000    1.0198899    304.05178   -742.04027   -6569.3074 
+ 3000000     1.042823    311.93025    843.40029   -6477.4293 
+ 3100000    1.0492322    302.38108    618.30707   -6526.7471 
+ 3200000    1.0339644    300.38677   -93.848804   -6597.7112 
+ 3300000    1.0403283    293.65868   -312.80568   -6565.5509 
+ 3400000    1.0335178    287.39746    548.77281   -6503.4442 
+ 3500000    1.0269352    304.09575    716.35733   -6479.7372 
+ 3600000    1.0297374    299.15987    535.97294   -6589.2781 
+ 3700000    1.0434454      307.711   -140.88587   -6560.2001 
+ 3800000    1.0335059    282.51827   -61.583893   -6560.3255 
+ 3900000    1.0387194    306.62014    170.37335   -6537.0336 
+ 4000000    1.0360404    305.64155   -332.53527   -6453.2214 
+ 4100000    1.0420097     294.6674    18.547212   -6631.8774 
+ 4200000    1.0151361     299.4951   -631.28962   -6556.6209 
+ 4300000    1.0487365    303.40959    39.795868   -6541.2574 
+ 4400000    1.0492832    303.77112    102.79615   -6517.9324 
+ 4500000    1.0414776    300.22229    797.65509   -6527.9054 
+ 4600000     1.030357    294.54092   -53.276345   -6512.1479 
+ 4700000    1.0448434    287.98022   -182.85827   -6527.6529 
+ 4800000    1.0353237    305.22658     534.9675   -6541.4737 
+ 4900000    1.0391212    280.21853    630.92989   -6621.3027 
+ 5000000     1.040668     302.8794   -261.03019   -6536.5665 
+Loop time of 3828.8 on 128 procs for 5000000 steps with 1685 atoms
+
+Performance: 225.658 ns/day, 0.106 hours/ns, 1305.893 timesteps/s
+99.2% CPU use with 128 MPI tasks x no OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 615.72     | 760.59     | 915.33     | 480.4 | 19.87
+Bond    | 0.4611     | 0.56138    | 0.80903    |  10.8 |  0.01
+Kspace  | 1658.4     | 1833.8     | 1992.7     | 315.3 | 47.90
+Neigh   | 89.926     | 97.239     | 99.614     |  21.4 |  2.54
+Comm    | 436.06     | 496.81     | 585.98     | 136.6 | 12.98
+Output  | 0.0036306  | 0.004196   | 0.0080388  |   0.7 |  0.00
+Modify  | 498.05     | 556.06     | 612.37     | 122.0 | 14.52
+Other   |            | 83.69      |            |       |  2.19
+
+Nlocal:    13.1641 ave 19 max 7 min
+Histogram: 5 4 8 15 21 36 15 10 11 3
+Nghost:    2665.16 ave 2710 max 2621 min
+Histogram: 3 5 12 16 27 30 17 10 6 2
+Neighs:    5127.38 ave 8629 max 2535 min
+Histogram: 5 17 18 24 21 16 12 5 8 2
+
+Total # of neighbors = 656305
+Ave neighs/atom = 389.499
+Ave special neighs/atom = 1.97626
+Neighbor list builds = 409618
+Dangerous builds = 0
+reset_timestep 0
+
+
+#################### 3) Obtaining average volume in NPT ######################
+# Creating restart files
+restart ${Nf} 1.restart 2.restart
+restart 100000 1.restart 2.restart
+
+# Getting the average volume of the system
+variable Volume equal vol
+fix VoluAve all ave/time 1 ${Npnpt} ${Npnpt} v_Volume file volume.dat
+fix VoluAve all ave/time 1 5000000 ${Npnpt} v_Volume file volume.dat
+fix VoluAve all ave/time 1 5000000 5000000 v_Volume file volume.dat
+
+variable Dens equal density
+fix DensAve all ave/time 1 ${NBR} ${NBR} v_Dens file density.dat
+fix DensAve all ave/time 1 50000 ${NBR} v_Dens file density.dat
+fix DensAve all ave/time 1 50000 50000 v_Dens file density.dat
+
+compute T1 all temp
+fix TempAve1 all ave/time 1 ${NBR} ${NBR} c_T1 file temperatureNPT.dat
+fix TempAve1 all ave/time 1 50000 ${NBR} c_T1 file temperatureNPT.dat
+fix TempAve1 all ave/time 1 50000 50000 c_T1 file temperatureNPT.dat
+
+compute P1 all pressure T1
+fix PressAve1 all ave/time 1 ${NBR} ${NBR} c_P1 file pressureNPT.dat
+fix PressAve1 all ave/time 1 50000 ${NBR} c_P1 file pressureNPT.dat
+fix PressAve1 all ave/time 1 50000 50000 c_P1 file pressureNPT.dat
+
+run ${Npnpt}
+run 5000000
+PPPM initialization ...
+  extracting TIP4P info from pair style
+  using 12-bit tables for long-range coulomb (../kspace.cpp:321)
+  G vector (1/distance) = 0.310338
+  grid = 24 24 24
+  stencil order = 5
+  estimated absolute RMS force accuracy = 0.00381017
+  estimated relative force accuracy = 1.14742e-05
+  using double precision FFTs
+  3d grid and FFT values/proc = 1690 144
+Per MPI rank memory allocation (min/avg/max) = 8.128 | 8.14 | 8.15 Mbytes
+Step Density Temp Press TotEng 
+       0     1.040668     302.8794   -219.28633   -6536.5663 
+  100000    1.0177758    281.40979    116.44419   -6609.2361 
+  200000    1.0377799    309.28831   -491.24028     -6543.18 
+  300000    1.0336296    294.78073   -833.12382   -6483.7393 
+  400000    1.0319846    298.90776    232.76978   -6522.0398 
+  500000    1.0289853    292.95256    423.65764   -6542.8566 
+  600000    1.0401201    295.35205   -293.06686   -6571.1361 
+  700000     1.030124     295.3898    317.48015   -6584.5798 
+  800000    1.0354463    309.29225    484.96799   -6501.3158 
+  900000    1.0356501    287.63798    817.81093    -6602.827 
+ 1000000     1.046602    293.05928   -169.74561   -6545.8475 
+ 1100000    1.0251351    306.81646   -125.02601   -6531.1667 
+ 1200000    1.0222391    299.55335    508.85808   -6519.8083 
+ 1300000    1.0161816    305.01509    -57.80109   -6498.5354 
+ 1400000    1.0436296    306.97424    493.66703   -6506.5728 
+ 1500000    1.0256225    289.01095   -175.85048   -6589.6939 
+ 1600000    1.0301021    303.04029   -85.161337   -6519.4645 
+ 1700000    1.0228848    288.50864    206.82914   -6549.9674 
+ 1800000    1.0394734    302.09079    282.25123   -6508.9314 
+ 1900000    1.0504846    291.97792    327.53486   -6591.9331 
+ 2000000    1.0411286    298.95835    227.22753   -6523.8772 
+ 2100000     1.029368    300.78513   -216.47261   -6560.8124 
+ 2200000    1.0062894    299.56248   -1108.8592   -6576.3503 
+ 2300000     1.026591    292.97256   -1212.4374   -6501.7393 
+ 2400000    1.0410718    283.58928   -389.24021    -6585.397 
+ 2500000    1.0362349    294.96502    338.49641   -6594.1102 
+ 2600000    1.0408394    288.99296     15.97468   -6590.7456 
+ 2700000    1.0296585    291.19486   -124.78265   -6636.4792 
+ 2800000    1.0219535    289.46857   -964.46011   -6610.2074 
+ 2900000    1.0325341    289.84985   -1079.1031   -6623.8513 
+ 3000000    1.0397192    292.31646    1286.9255   -6631.3394 
+ 3100000    1.0466419    289.33099   -857.89651   -6513.6798 
+ 3200000    1.0346028    293.70893   -239.42844   -6558.2978 
+ 3300000    1.0423077    306.70899    431.29541   -6588.4039 
+ 3400000    1.0353122    288.51235   -467.49751   -6617.5687 
+ 3500000    1.0216029    301.80171   -371.89206   -6530.3558 
+ 3600000    1.0346271    275.28375   -132.36394   -6639.0096 
+ 3700000    1.0289161    301.76845    460.66254   -6550.6909 
+ 3800000    1.0409352    295.25773   -601.64206   -6530.3928 
+ 3900000    1.0181099    295.42647    689.49174   -6490.7848 
+ 4000000    1.0442754    304.73688   -131.03619   -6552.6698 
+ 4100000    1.0612552    300.24502    166.22624    -6544.575 
+ 4200000    1.0597244    287.46563     445.6703   -6598.0422 
+ 4300000    1.0216987    284.13867   -106.43973   -6665.5748 
+ 4400000    1.0386086    293.56692    -316.7662   -6540.9593 
+ 4500000    1.0347784     291.9115    520.42805   -6596.5341 
+ 4600000    1.0232944    294.71701   -192.23431   -6530.0684 
+ 4700000    1.0299012     298.0256    313.59069   -6522.3427 
+ 4800000    1.0259835    287.59648    -1097.543   -6588.5677 
+ 4900000    1.0377034     304.6687    1089.6735   -6467.0316 
+ 5000000    1.0301387    299.72764   -774.04349   -6563.6822 
+Loop time of 3910.95 on 128 procs for 5000000 steps with 1685 atoms
+
+Performance: 220.918 ns/day, 0.109 hours/ns, 1278.463 timesteps/s
+99.1% CPU use with 128 MPI tasks x no OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 615.18     | 762.31     | 916.73     | 479.1 | 19.49
+Bond    | 0.46831    | 0.59741    | 0.84556    |  12.2 |  0.02
+Kspace  | 1651       | 1820.6     | 1981       | 314.4 | 46.55
+Neigh   | 90.716     | 95.83      | 97.907     |  14.0 |  2.45
+Comm    | 435.96     | 485.64     | 561.73     | 114.9 | 12.42
+Output  | 2.1459     | 2.1472     | 2.148      |   0.0 |  0.05
+Modify  | 603.92     | 659.8      | 709.62     | 106.3 | 16.87
+Other   |            | 84         |            |       |  2.15
+
+Nlocal:    13.1641 ave 19 max 7 min
+Histogram: 2 4 9 16 18 41 20 9 6 3
+Nghost:    2631.29 ave 2662 max 2600 min
+Histogram: 3 15 9 17 18 20 15 13 10 8
+Neighs:    5070.77 ave 8881 max 2230 min
+Histogram: 1 15 19 23 27 21 11 7 2 2
+
+Total # of neighbors = 649058
+Ave neighs/atom = 385.198
+Ave special neighs/atom = 1.97626
+Neighbor list builds = 409707
+Dangerous builds = 0
+
+#################### 4) Initializing the NVT ensemble ####################
+# scaling the size of the system to the average volume
+variable sidesize equal (f_VoluAve^(1.0/3.0))    # get the volume
+variable xlow equal xlo
+variable ylow equal ylo
+variable zlow equal zlo
+variable xhig equal (xlo+${sidesize})
+variable xhig equal (xlo+25.7031445459364)
+variable yhig equal (ylo+${sidesize})
+variable yhig equal (ylo+25.7031445459364)
+variable zhig equal (zlo+${sidesize})
+variable zhig equal (zlo+25.7031445459364)
+change_box all x final ${xlow} ${xhig} y final ${ylow} ${yhig} z final ${zlow} ${zhig}
+change_box all x final 0.07533327777133 ${xhig} y final ${ylow} ${yhig} z final ${zlow} ${zhig}
+change_box all x final 0.07533327777133 25.7784778237077 y final ${ylow} ${yhig} z final ${zlow} ${zhig}
+change_box all x final 0.07533327777133 25.7784778237077 y final 0.07533327777133 ${yhig} z final ${zlow} ${zhig}
+change_box all x final 0.07533327777133 25.7784778237077 y final 0.07533327777133 25.7784778237077 z final ${zlow} ${zhig}
+change_box all x final 0.07533327777133 25.7784778237077 y final 0.07533327777133 25.7784778237077 z final 0.07533327777133 ${zhig}
+change_box all x final 0.07533327777133 25.7784778237077 y final 0.07533327777133 25.7784778237077 z final 0.07533327777133 25.7784778237077
+  orthogonal box = (0.0753333 0.0753333 0.0753333) to (25.7785 25.818 25.818)
+  orthogonal box = (0.0753333 0.0753333 0.0753333) to (25.7785 25.7785 25.818)
+  orthogonal box = (0.0753333 0.0753333 0.0753333) to (25.7785 25.7785 25.7785)
+unfix DensAve
+unfix VoluAve
+unfix TempAve1
+unfix PressAve1
+
+# changing the ensemble to NVT
+unfix integrate
+fix integrate all nvt temp ${Temp} ${Temp} 10.0
+fix integrate all nvt temp 298.15 ${Temp} 10.0
+fix integrate all nvt temp 298.15 298.15 10.0
+
+timestep 0.001
+run ${Ninvtpre}
+run 5000
+PPPM initialization ...
+  extracting TIP4P info from pair style
+  using 12-bit tables for long-range coulomb (../kspace.cpp:321)
+  G vector (1/distance) = 0.310205
+  grid = 24 24 24
+  stencil order = 5
+  estimated absolute RMS force accuracy = 0.00383127
+  estimated relative force accuracy = 1.15377e-05
+  using double precision FFTs
+  3d grid and FFT values/proc = 1690 144
+Per MPI rank memory allocation (min/avg/max) = 8.128 | 8.141 | 8.15 Mbytes
+Step Density Temp Press TotEng 
+ 5000000    1.0348992    299.72764    -81680.38    -6531.404 
+ 5005000    1.0348992    300.58606   -75.567227   -6562.8449 
+Loop time of 3.07602 on 128 procs for 5000 steps with 1685 atoms
+
+Performance: 0.140 ns/day, 170.890 hours/ns, 1625.475 timesteps/s
+99.3% CPU use with 128 MPI tasks x no OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0.18928    | 0.50884    | 0.94741    |  20.4 | 16.54
+Bond    | 0.00033381 | 0.00039807 | 0.00065737 |   0.0 |  0.01
+Kspace  | 1.263      | 1.6937     | 2.0148     |  11.3 | 55.06
+Neigh   | 0          | 0          | 0          |   0.0 |  0.00
+Comm    | 0.44199    | 0.47911    | 0.51262    |   2.3 | 15.58
+Output  | 5.7237e-05 | 6.3798e-05 | 0.00012636 |   0.0 |  0.00
+Modify  | 0.3099     | 0.34092    | 0.36561    |   2.3 | 11.08
+Other   |            | 0.05298    |            |       |  1.72
+
+Nlocal:    13.1641 ave 19 max 6 min
+Histogram: 1 1 3 26 20 22 37 8 6 4
+Nghost:    2640.78 ave 2676 max 2607 min
+Histogram: 5 11 11 18 19 28 13 12 8 3
+Neighs:    5094.44 ave 8936 max 1890 min
+Histogram: 1 5 21 23 30 24 12 6 4 2
+
+Total # of neighbors = 652088
+Ave neighs/atom = 386.996
+Ave special neighs/atom = 1.97626
+Neighbor list builds = 0
+Dangerous builds = 0
+timestep 0.01
+run ${Ninvtpre}
+run 5000
+PPPM initialization ...
+  extracting TIP4P info from pair style
+  using 12-bit tables for long-range coulomb (../kspace.cpp:321)
+  G vector (1/distance) = 0.310205
+  grid = 24 24 24
+  stencil order = 5
+  estimated absolute RMS force accuracy = 0.00383127
+  estimated relative force accuracy = 1.15377e-05
+  using double precision FFTs
+  3d grid and FFT values/proc = 1690 144
+Per MPI rank memory allocation (min/avg/max) = 8.128 | 8.141 | 8.15 Mbytes
+Step Density Temp Press TotEng 
+ 5005000    1.0348992    300.58606   -75.587583   -6562.8449 
+ 5010000    1.0348992    297.96412   -183.40033   -6599.9007 
+Loop time of 2.83958 on 128 procs for 5000 steps with 1685 atoms
+
+Performance: 1.521 ns/day, 15.775 hours/ns, 1760.826 timesteps/s
+99.4% CPU use with 128 MPI tasks x no OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0.24766    | 0.50856    | 0.94653    |  20.0 | 17.91
+Bond    | 0.0003236  | 0.00039956 | 0.0006454  |   0.0 |  0.01
+Kspace  | 1.1003     | 1.5373     | 1.8028     |  11.8 | 54.14
+Neigh   | 0.00041551 | 0.00042869 | 0.00044247 |   0.0 |  0.02
+Comm    | 0.40002    | 0.45858    | 0.48938    |   3.2 | 16.15
+Output  | 5.1036e-05 | 5.8377e-05 | 8.7052e-05 |   0.0 |  0.00
+Modify  | 0.25749    | 0.28413    | 0.30354    |   2.0 | 10.01
+Other   |            | 0.05013    |            |       |  1.77
+
+Nlocal:    13.1641 ave 19 max 7 min
+Histogram: 3 6 5 14 21 43 17 11 5 3
+Nghost:    2646.85 ave 2705 max 2603 min
+Histogram: 5 10 15 29 25 17 17 6 3 1
+Neighs:    5093.55 ave 9142 max 2474 min
+Histogram: 7 11 28 24 23 17 12 2 2 2
+
+Total # of neighbors = 651974
+Ave neighs/atom = 386.928
+Ave special neighs/atom = 1.97626
+Neighbor list builds = 2
+Dangerous builds = 0
+timestep 0.1
+run ${Ninvtpre}
+run 5000
+PPPM initialization ...
+  extracting TIP4P info from pair style
+  using 12-bit tables for long-range coulomb (../kspace.cpp:321)
+  G vector (1/distance) = 0.310205
+  grid = 24 24 24
+  stencil order = 5
+  estimated absolute RMS force accuracy = 0.00383127
+  estimated relative force accuracy = 1.15377e-05
+  using double precision FFTs
+  3d grid and FFT values/proc = 1690 144
+Per MPI rank memory allocation (min/avg/max) = 8.128 | 8.141 | 8.15 Mbytes
+Step Density Temp Press TotEng 
+ 5010000    1.0348992    297.96412   -183.14889   -6599.9007 
+ 5015000    1.0348992    295.92114   -1158.3438   -6612.1974 
+Loop time of 3.0405 on 128 procs for 5000 steps with 1685 atoms
+
+Performance: 14.208 ns/day, 1.689 hours/ns, 1644.464 timesteps/s
+99.3% CPU use with 128 MPI tasks x no OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0.32283    | 0.51861    | 0.86368    |  19.3 | 17.06
+Bond    | 0.00033172 | 0.00039708 | 0.0006408  |   0.0 |  0.01
+Kspace  | 1.3864     | 1.7142     | 1.9041     |  10.8 | 56.38
+Neigh   | 0.0043004  | 0.0043833  | 0.0044912  |   0.1 |  0.14
+Comm    | 0.40885    | 0.44583    | 0.50244    |   3.1 | 14.66
+Output  | 8.8856e-05 | 9.6527e-05 | 0.0001248  |   0.0 |  0.00
+Modify  | 0.28011    | 0.30583    | 0.32592    |   1.9 | 10.06
+Other   |            | 0.05112    |            |       |  1.68
+
+Nlocal:    13.1641 ave 20 max 7 min
+Histogram: 4 5 8 35 12 30 23 5 3 3
+Nghost:    2651.48 ave 2690 max 2596 min
+Histogram: 3 4 7 9 14 25 26 17 14 9
+Neighs:    5095.47 ave 9027 max 2625 min
+Histogram: 10 20 23 15 21 17 13 4 3 2
+
+Total # of neighbors = 652220
+Ave neighs/atom = 387.074
+Ave special neighs/atom = 1.97626
+Neighbor list builds = 21
+Dangerous builds = 0
+timestep 0.2
+run ${Ninvtpre}
+run 5000
+PPPM initialization ...
+  extracting TIP4P info from pair style
+  using 12-bit tables for long-range coulomb (../kspace.cpp:321)
+  G vector (1/distance) = 0.310205
+  grid = 24 24 24
+  stencil order = 5
+  estimated absolute RMS force accuracy = 0.00383127
+  estimated relative force accuracy = 1.15377e-05
+  using double precision FFTs
+  3d grid and FFT values/proc = 1690 144
+Per MPI rank memory allocation (min/avg/max) = 8.128 | 8.141 | 8.15 Mbytes
+Step Density Temp Press TotEng 
+ 5015000    1.0348992    295.92114   -1158.5233   -6612.1974 
+ 5020000    1.0348992    305.83804    20.336369   -6556.4039 
+Loop time of 2.88361 on 128 procs for 5000 steps with 1685 atoms
+
+Performance: 29.962 ns/day, 0.801 hours/ns, 1733.937 timesteps/s
+99.4% CPU use with 128 MPI tasks x no OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0.30075    | 0.52564    | 0.84712    |  18.1 | 18.23
+Bond    | 0.00032852 | 0.00039324 | 0.00064362 |   0.0 |  0.01
+Kspace  | 1.2255     | 1.5387     | 1.771      |  10.7 | 53.36
+Neigh   | 0.0087391  | 0.008894   | 0.0090557  |   0.1 |  0.31
+Comm    | 0.41121    | 0.44713    | 0.47514    |   2.4 | 15.51
+Output  | 5.882e-05  | 6.6809e-05 | 9.5769e-05 |   0.0 |  0.00
+Modify  | 0.28437    | 0.31086    | 0.332      |   2.0 | 10.78
+Other   |            | 0.05189    |            |       |  1.80
+
+Nlocal:    13.1641 ave 20 max 5 min
+Histogram: 1 0 8 11 33 22 26 14 10 3
+Nghost:    2632.49 ave 2671 max 2586 min
+Histogram: 2 3 8 18 23 21 23 15 11 4
+Neighs:    5097.46 ave 9014 max 1640 min
+Histogram: 1 6 14 26 31 25 10 10 2 3
+
+Total # of neighbors = 652475
+Ave neighs/atom = 387.226
+Ave special neighs/atom = 1.97626
+Neighbor list builds = 42
+Dangerous builds = 0
+timestep 0.5
+run ${Ninvtpre}
+run 5000
+PPPM initialization ...
+  extracting TIP4P info from pair style
+  using 12-bit tables for long-range coulomb (../kspace.cpp:321)
+  G vector (1/distance) = 0.310205
+  grid = 24 24 24
+  stencil order = 5
+  estimated absolute RMS force accuracy = 0.00383127
+  estimated relative force accuracy = 1.15377e-05
+  using double precision FFTs
+  3d grid and FFT values/proc = 1690 144
+Per MPI rank memory allocation (min/avg/max) = 8.128 | 8.141 | 8.15 Mbytes
+Step Density Temp Press TotEng 
+ 5020000    1.0348992    305.83804    18.033751   -6556.4039 
+ 5025000    1.0348992    305.82412   -162.62009   -6567.1166 
+Loop time of 3.11001 on 128 procs for 5000 steps with 1685 atoms
+
+Performance: 69.453 ns/day, 0.346 hours/ns, 1607.714 timesteps/s
+99.3% CPU use with 128 MPI tasks x no OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0.31335    | 0.54045    | 0.83763    |  17.2 | 17.38
+Bond    | 0.00032962 | 0.00039585 | 0.00065512 |   0.0 |  0.01
+Kspace  | 1.4456     | 1.7366     | 1.9717     |   9.8 | 55.84
+Neigh   | 0.022079   | 0.023106   | 0.023574   |   0.2 |  0.74
+Comm    | 0.43392    | 0.46628    | 0.48776    |   2.1 | 14.99
+Output  | 5.1005e-05 | 5.9565e-05 | 9.3054e-05 |   0.0 |  0.00
+Modify  | 0.26702    | 0.29133    | 0.31094    |   1.8 |  9.37
+Other   |            | 0.05181    |            |       |  1.67
+
+Nlocal:    13.1641 ave 19 max 7 min
+Histogram: 3 4 12 11 21 41 14 11 8 3
+Nghost:    2645.2 ave 2682 max 2592 min
+Histogram: 3 4 7 7 17 22 26 19 16 7
+Neighs:    5094.13 ave 8577 max 2341 min
+Histogram: 3 12 17 26 26 17 10 9 5 3
+
+Total # of neighbors = 652049
+Ave neighs/atom = 386.973
+Ave special neighs/atom = 1.97626
+Neighbor list builds = 104
+Dangerous builds = 0
+
+unfix integrate
+fix integrate all nvt temp ${Temp} ${Temp} 100.0
+fix integrate all nvt temp 298.15 ${Temp} 100.0
+fix integrate all nvt temp 298.15 298.15 100.0
+# continuing the initialization with the final value of timestep
+timestep ${tstep}
+timestep 2
+
+run ${Ninvt}
+run 2000000
+PPPM initialization ...
+  extracting TIP4P info from pair style
+  using 12-bit tables for long-range coulomb (../kspace.cpp:321)
+  G vector (1/distance) = 0.310205
+  grid = 24 24 24
+  stencil order = 5
+  estimated absolute RMS force accuracy = 0.00383127
+  estimated relative force accuracy = 1.15377e-05
+  using double precision FFTs
+  3d grid and FFT values/proc = 1690 144
+Per MPI rank memory allocation (min/avg/max) = 8.128 | 8.141 | 8.15 Mbytes
+Step Density Temp Press TotEng 
+ 5025000    1.0348992    305.82412     -183.959   -6567.1166 
+ 5100000    1.0348992    309.41328    -99.04679   -6429.7711 
+ 5200000    1.0348992    298.14161    133.24976   -6571.9176 
+ 5300000    1.0348992    299.01285    634.06895   -6584.0437 
+ 5400000    1.0348992    292.96069   -418.82567   -6563.6519 
+ 5500000    1.0348992    312.86026   -940.04105   -6520.3626 
+ 5600000    1.0348992    289.77841   -95.567295   -6526.6685 
+ 5700000    1.0348992      289.857    266.91739   -6580.8722 
+ 5800000    1.0348992    301.67473    110.33352   -6525.1018 
+ 5900000    1.0348992    283.74699    428.25218   -6602.2721 
+ 6000000    1.0348992    289.70477   -456.58626   -6636.5011 
+ 6100000    1.0348992    307.05241    74.961629   -6475.1544 
+ 6200000    1.0348992    299.16789    -283.7964   -6507.8013 
+ 6300000    1.0348992    309.27617    322.89047   -6454.1044 
+ 6400000    1.0348992    297.04477   -56.623027   -6519.4377 
+ 6500000    1.0348992    295.75138    422.60722   -6540.4627 
+ 6600000    1.0348992    295.40682   -331.14667   -6548.3319 
+ 6700000    1.0348992    301.05233   -186.98942   -6530.0928 
+ 6800000    1.0348992    308.90592    524.46309   -6475.5844 
+ 6900000    1.0348992    284.31099    295.71631   -6565.4093 
+ 7000000    1.0348992    296.69836    207.19133    -6479.333 
+ 7025000    1.0348992    295.27229    484.50198   -6548.6598 
+Loop time of 1229.79 on 128 procs for 2000000 steps with 1685 atoms
+
+Performance: 281.023 ns/day, 0.085 hours/ns, 1626.291 timesteps/s
+99.4% CPU use with 128 MPI tasks x no OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 180.19     | 227.74     | 274.32     | 273.3 | 18.52
+Bond    | 0.13221    | 0.15791    | 0.24896    |   5.1 |  0.01
+Kspace  | 574.26     | 627.46     | 675.24     | 170.5 | 51.02
+Neigh   | 35.08      | 35.826     | 36.414     |   5.2 |  2.91
+Comm    | 180.79     | 193.55     | 204.37     |  41.9 | 15.74
+Output  | 0.91407    | 0.9144     | 0.91506    |   0.0 |  0.07
+Modify  | 111.66     | 122.51     | 130.38     |  38.1 |  9.96
+Other   |            | 21.63      |            |       |  1.76
+
+Nlocal:    13.1641 ave 22 max 5 min
+Histogram: 2 0 20 14 33 36 12 9 0 2
+Nghost:    2649.77 ave 2693 max 2588 min
+Histogram: 3 3 6 14 16 16 28 18 18 6
+Neighs:    5102.26 ave 9769 max 2333 min
+Histogram: 8 16 27 28 14 17 12 4 1 1
+
+Total # of neighbors = 653089
+Ave neighs/atom = 387.59
+Ave special neighs/atom = 1.97626
+Neighbor list builds = 162286
+Dangerous builds = 0
+
+reset_timestep 0
+
+#################### 2) Production in NVT ensemble #####################
+# computing average total energy, pontential energy, temperature, and pressure over time
+variable TotEn equal etotal
+fix TEAve all ave/time ${Ne} ${Nr} ${Nf} v_TotEn file TotalE.dat
+fix TEAve all ave/time 1 ${Nr} ${Nf} v_TotEn file TotalE.dat
+fix TEAve all ave/time 1 100000 ${Nf} v_TotEn file TotalE.dat
+fix TEAve all ave/time 1 100000 100000 v_TotEn file TotalE.dat
+
+variable PotEn equal pe
+fix PEAve all ave/time ${Ne} ${Nr} ${Nf} v_PotEn file PotenE.dat
+fix PEAve all ave/time 1 ${Nr} ${Nf} v_PotEn file PotenE.dat
+fix PEAve all ave/time 1 100000 ${Nf} v_PotEn file PotenE.dat
+fix PEAve all ave/time 1 100000 100000 v_PotEn file PotenE.dat
+
+compute T all temp
+fix TempAve all ave/time ${Ne} ${Nr} ${Nf} c_T file temperature.dat
+fix TempAve all ave/time 1 ${Nr} ${Nf} c_T file temperature.dat
+fix TempAve all ave/time 1 100000 ${Nf} c_T file temperature.dat
+fix TempAve all ave/time 1 100000 100000 c_T file temperature.dat
+
+compute P all pressure T
+fix PressAve all ave/time ${Ne} ${Nr} ${Nf} c_P file pressure.dat
+fix PressAve all ave/time 1 ${Nr} ${Nf} c_P file pressure.dat
+fix PressAve all ave/time 1 100000 ${Nf} c_P file pressure.dat
+fix PressAve all ave/time 1 100000 100000 c_P file pressure.dat
+
+
+# computing self-diffusion and Onsager coefficients using the OCTP plugin
+compute positions all position
+fix f1 all ordern diffusivity ${Ndiff} ${Nwrit} c_positions nb ${nb} nbe ${nbe}
+fix f1 all ordern diffusivity 500 ${Nwrit} c_positions nb ${nb} nbe ${nbe}
+fix f1 all ordern diffusivity 500 50000 c_positions nb ${nb} nbe ${nbe}
+fix f1 all ordern diffusivity 500 50000 c_positions nb 10 nbe ${nbe}
+fix f1 all ordern diffusivity 500 50000 c_positions nb 10 nbe 20
+
+
+# computing shear and bulk viscosities  using the OCTP plugin
+fix f2 all ordern viscosity ${Nvisc} ${Nwrit} c_P nb ${nb} nbe ${nbe}
+fix f2 all ordern viscosity 5 ${Nwrit} c_P nb ${nb} nbe ${nbe}
+fix f2 all ordern viscosity 5 50000 c_P nb ${nb} nbe ${nbe}
+fix f2 all ordern viscosity 5 50000 c_P nb 10 nbe ${nbe}
+fix f2 all ordern viscosity 5 50000 c_P nb 10 nbe 20
+
+
+# computing thermal conductivity using the OCTP plugin
+compute KE all ke/atom
+compute PE all pe/atom
+compute ST all stress/atom NULL virial
+compute heatflux all heat/flux KE PE ST
+fix f3 all ordern thermalconductivity ${Ncond} ${Nwrit} c_heatflux nb ${nb} nbe ${nbe}
+fix f3 all ordern thermalconductivity 5 ${Nwrit} c_heatflux nb ${nb} nbe ${nbe}
+fix f3 all ordern thermalconductivity 5 50000 c_heatflux nb ${nb} nbe ${nbe}
+fix f3 all ordern thermalconductivity 5 50000 c_heatflux nb 10 nbe ${nbe}
+fix f3 all ordern thermalconductivity 5 50000 c_heatflux nb 10 nbe 20
+
+
+# computing the RDF for all group pairs
+compute rdfs all rdf/ext Nbin ${binnum} Nwrite ${Nrdfw}
+compute rdfs all rdf/ext Nbin 2000 Nwrite ${Nrdfw}
+compute rdfs all rdf/ext Nbin 2000 Nwrite 1000
+fix f4 all ave/time 1 1 ${Nrdfe} c_rdfs
+fix f4 all ave/time 1 1 1000 c_rdfs
+
+dump trjectory all xyz ${Nd} movie.xyz
+dump trjectory all xyz 100000 movie.xyz
+dump_modify trjectory element Ow H Na Cl
+
+run ${Nrun}
+run 100000000
+PPPM initialization ...
+  extracting TIP4P info from pair style
+  using 12-bit tables for long-range coulomb (../kspace.cpp:321)
+  G vector (1/distance) = 0.310205
+  grid = 24 24 24
+  stencil order = 5
+  estimated absolute RMS force accuracy = 0.00383127
+  estimated relative force accuracy = 1.15377e-05
+  using double precision FFTs
+  3d grid and FFT values/proc = 1690 144
+Per MPI rank memory allocation (min/avg/max) = 13.6 | 13.61 | 13.62 Mbytes
+Step Density Temp Press TotEng 
+       0    1.0348992    295.27229    484.32811   -6548.6598 
+  100000    1.0348992    295.04843   -824.03468   -6550.8003 
+  200000    1.0348992    300.45254   -208.29159   -6561.2962 
+  300000    1.0348992    293.69147   -106.74198    -6564.511 
+  400000    1.0348992    304.93365    -434.1671   -6467.3575 
+  500000    1.0348992    289.81949    73.198681   -6586.7764 
+  600000    1.0348992    312.16866    391.54744   -6544.9492 
+  700000    1.0348992    308.61309   -921.49448   -6570.3983 
+  800000    1.0348992    297.02521     -865.741   -6460.4217 
+  900000    1.0348992    297.29685   -430.12152   -6568.8125 
+ 1000000    1.0348992    297.80024    895.32201   -6547.1088 
+ 1100000    1.0348992    311.49974     64.13242   -6499.2117 
+ 1200000    1.0348992    295.51152    556.79062   -6576.2672 
+ 1300000    1.0348992      290.925    833.44017    -6571.583 
+ 1400000    1.0348992    290.67437   -16.253253   -6566.2595 
+ 1500000    1.0348992    288.09736    167.50665   -6597.6885 
+ 1600000    1.0348992    283.71159    522.38117    -6625.328 
+ 1700000    1.0348992    297.73579   -1303.0253   -6555.3965 
+ 1800000    1.0348992    306.13815   -337.33963    -6512.557 
+ 1900000    1.0348992    290.84204    24.318843   -6538.0372 
+ 2000000    1.0348992    299.63169    408.72554   -6583.8759 
+ 2100000    1.0348992    298.47346    42.513599   -6575.1365 
+ 2200000    1.0348992    301.02521   -532.58203   -6537.6926 
+ 2300000    1.0348992    310.69819   -300.85728   -6503.6992 
+ 2400000    1.0348992    297.98789   -327.70623   -6665.0428 
+ 2500000    1.0348992    289.60732    742.09751   -6581.9795 
+ 2600000    1.0348992    305.61556    423.33672   -6430.7224 
+ 2700000    1.0348992    290.67603    893.10475   -6625.1533 
+ 2800000    1.0348992    298.04773    808.90397   -6542.1163 
+ 2900000    1.0348992    297.30405    -323.1196   -6616.7494 
+ 3000000    1.0348992     312.5792    646.85027   -6499.8581 
+ 3100000    1.0348992    289.28936    1338.6329   -6549.3168 
+ 3200000    1.0348992    298.78532    21.993039    -6567.791 
+ 3300000    1.0348992    311.43449   -291.08781    -6497.147 
+ 3400000    1.0348992    301.79511     -376.593   -6561.7855 
+ 3500000    1.0348992    307.23279    329.90405   -6593.3081 
+ 3600000    1.0348992    293.84197    608.67531    -6568.879 
+ 3700000    1.0348992    295.23842   -1204.8488   -6602.3346 
+ 3800000    1.0348992    295.68183   -704.43208   -6562.2665 
+ 3900000    1.0348992    299.80103    412.78131   -6519.4267 
+ 4000000    1.0348992    298.53728   -391.15725   -6543.4674 
+ 4100000    1.0348992    299.51443   -628.91935   -6498.7691 
+ 4200000    1.0348992    301.98986   -367.91944   -6515.9933 
+ 4300000    1.0348992    293.12371    1089.3495   -6522.6627 
+ 4400000    1.0348992    307.83876    822.17842   -6478.7704 
+ 4500000    1.0348992    298.51659    880.17592    -6492.542 
+ 4600000    1.0348992    304.23621    1024.9671   -6525.3608 
+ 4700000    1.0348992    302.06256   -216.14839   -6483.5563 
+ 4800000    1.0348992    298.73749   -1046.1525   -6518.9125 
+ 4900000    1.0348992    298.40382    -140.7885   -6498.8143 
+ 5000000    1.0348992    294.96434    220.19854   -6631.4534 
+ 5100000    1.0348992    288.52696    218.89708   -6579.0226 
+ 5200000    1.0348992    295.41982    304.36045    -6584.561 
+ 5300000    1.0348992    300.26897    308.35583   -6606.7329 
+ 5400000    1.0348992    297.17759    525.19296   -6585.4746 
+ 5500000    1.0348992    295.92064   -744.20763   -6506.8525 
+ 5600000    1.0348992    296.89583    -306.6088   -6545.6695 
+ 5700000    1.0348992    293.84848    836.51012   -6562.2937 
+ 5800000    1.0348992    295.04344    -378.8495   -6567.9982 
+ 5900000    1.0348992    301.96781   -88.205784    -6475.971 
+ 6000000    1.0348992    284.42291   -51.911531   -6535.8628 
+ 6100000    1.0348992    302.01245    1471.8288   -6566.6214 
+ 6200000    1.0348992    290.10645    474.53155   -6516.4816 
+ 6300000    1.0348992     289.4978   -330.18245   -6500.7756 
+ 6400000    1.0348992    306.34562    151.64343   -6461.5563 
+ 6500000    1.0348992    286.47586    306.72763   -6536.5182 
+ 6600000    1.0348992     293.0819     14.27423   -6513.5664 
+ 6700000    1.0348992    296.36447   -947.29849   -6521.1266 
+ 6800000    1.0348992     289.6368    256.13697   -6547.1949 
+ 6900000    1.0348992    308.48093    284.57527   -6466.8941 
+ 7000000    1.0348992    290.87138    841.95639   -6554.2277 
+ 7100000    1.0348992    294.01023    262.49698   -6537.0718 
+ 7200000    1.0348992    306.31772    412.83146   -6440.5955 
+ 7300000    1.0348992    302.40836    -336.3365   -6567.3403 
+ 7400000    1.0348992    304.38297   -177.90607   -6556.8181 
+ 7500000    1.0348992     297.2532   -124.92715   -6524.4213 
+ 7600000    1.0348992    302.44487    248.56423   -6518.7194 
+ 7700000    1.0348992    287.95547   -482.06978   -6569.9778 
+ 7800000    1.0348992    287.73419   -896.51589   -6656.7081 
+ 7900000    1.0348992    300.31891    95.975957   -6487.3333 
+ 8000000    1.0348992    311.60703   -127.73466   -6492.7222 
+ 8100000    1.0348992    300.24247    827.03074    -6559.795 
+ 8200000    1.0348992    295.66841   -75.949955   -6569.5364 
+ 8300000    1.0348992    303.64602    480.65928   -6513.8958 
+ 8400000    1.0348992    306.63531   -212.62504   -6469.5982 
+ 8500000    1.0348992    309.46975    508.99403   -6491.1736 
+ 8600000    1.0348992    287.44171   -55.973092    -6628.726 
+ 8700000    1.0348992    303.98186    577.51008   -6532.1727 
+ 8800000    1.0348992    293.50712    349.75767   -6497.9993 
+ 8900000    1.0348992    291.73242   -175.96896   -6586.3674 
+ 9000000    1.0348992    298.06652    1123.3995   -6560.3328 
+ 9100000    1.0348992    309.04662    259.53439   -6468.5409 
+ 9200000    1.0348992    289.22192    81.951902   -6565.3962 
+ 9300000    1.0348992    300.27683   -839.81018   -6499.4208 
+ 9400000    1.0348992    295.48715      213.484   -6564.7254 
+ 9500000    1.0348992    310.57477    132.39746   -6470.0011 
+ 9600000    1.0348992    283.70755   -690.50089   -6586.0199 
+ 9700000    1.0348992    294.14144    588.86634   -6593.2198 
+ 9800000    1.0348992    299.82913    238.92952   -6525.6149 
+ 9900000    1.0348992    300.86758   -245.18157   -6534.8569 
+10000000    1.0348992    293.61245   -1072.4088   -6550.1301 
+10100000    1.0348992    292.97359   -464.58632   -6562.6704 
+10200000    1.0348992     295.3469   -161.67463   -6615.4151 
+10300000    1.0348992    304.37197   -578.88251   -6469.7969 
+10400000    1.0348992    296.61696    433.61511   -6591.8437 
+10500000    1.0348992    288.02975    575.81566   -6629.9077 
+10600000    1.0348992    296.30163   -119.81341   -6600.6673 
+10700000    1.0348992    299.58185   -148.90562   -6463.9799 
+10800000    1.0348992    288.21946   -185.16253   -6583.1976 
+10900000    1.0348992    326.69132    -876.7614   -6419.1166 
+11000000    1.0348992    303.26665   -1238.7006   -6543.6507 
+11100000    1.0348992    294.11575    425.09324   -6585.3388 
+11200000    1.0348992    313.19712   -909.42252   -6448.9855 
+11300000    1.0348992     295.1261    562.49231   -6555.8609 
+11400000    1.0348992    307.63714    223.41912   -6531.8438 
+11500000    1.0348992     301.9176   -137.80566   -6443.8071 
+11600000    1.0348992    316.18396    297.34368   -6398.8301 
+11700000    1.0348992    286.59655   -339.01476   -6650.7102 
+11800000    1.0348992    309.07586    164.76676   -6489.7861 
+11900000    1.0348992    306.25862    681.98884   -6563.5081 
+12000000    1.0348992    297.50435    70.201907   -6500.0002 
+12100000    1.0348992    297.02641    145.51859   -6602.1902 
+12200000    1.0348992    304.71102   -313.98516   -6537.8578 
+12300000    1.0348992    297.06226   -688.99478   -6652.3698 
+12400000    1.0348992    294.79821    793.27037   -6581.0062 
+12500000    1.0348992    290.82605    643.78192   -6537.0859 
+12600000    1.0348992    292.63788   -859.34585   -6612.7695 
+12700000    1.0348992    293.47363   -299.09771   -6532.6321 
+12800000    1.0348992    299.64853     227.4647   -6453.0145 
+12900000    1.0348992     290.9645     1400.709   -6547.4622 
+13000000    1.0348992    290.16656   -367.68413   -6507.2336 
+13100000    1.0348992    287.16337   -652.36121   -6601.7367 
+13200000    1.0348992    288.93405    104.86279   -6632.3931 
+13300000    1.0348992    303.24447    195.50859   -6461.5754 
+13400000    1.0348992    306.97103    -678.8206   -6521.8749 
+13500000    1.0348992    302.21383   -584.02113   -6553.1257 
+13600000    1.0348992      293.208   -452.14974   -6588.0516 
+13700000    1.0348992     296.7453   -67.392386   -6515.8789 
+13800000    1.0348992    302.30278    569.68872   -6579.9971 
+13900000    1.0348992    299.70146    134.74748   -6523.5681 
+14000000    1.0348992    290.26749    1339.1184   -6522.8018 
+14100000    1.0348992    288.83078   -210.41209   -6598.7879 
+14200000    1.0348992    295.36556   -542.41981   -6556.1268 
+14300000    1.0348992    299.25998   -729.60342   -6623.7944 
+14400000    1.0348992    313.40129    513.20902   -6433.1173 
+14500000    1.0348992    298.73422    497.47619   -6509.2534 
+14600000    1.0348992    296.58725   -53.429884   -6542.0907 
+14700000    1.0348992    288.51794   -647.60333    -6552.767 
+14800000    1.0348992    300.43892   -148.91619   -6438.8974 
+14900000    1.0348992    302.73702    722.47758   -6559.7992 
+15000000    1.0348992    293.43503   -269.50331   -6462.1607 
+15100000    1.0348992    297.03712    346.76207   -6541.6237 
+15200000    1.0348992    293.90676    41.786723   -6542.1423 
+15300000    1.0348992    291.71615    277.31317   -6631.2792 
+15400000    1.0348992    291.11021     79.27578   -6554.5627 
+15500000    1.0348992    303.79064    324.64397   -6641.0353 
+15600000    1.0348992    309.55801   -598.64162   -6453.2636 
+15700000    1.0348992    301.82982    499.37042   -6551.9429 
+15800000    1.0348992    294.07968   -288.93181   -6531.4716 
+15900000    1.0348992    301.86069    723.25933   -6518.2974 
+16000000    1.0348992    301.42038   -587.17185   -6497.2729 
+16100000    1.0348992     287.2894   -851.80408   -6599.6525 
+16200000    1.0348992    304.86166    256.17927   -6542.5467 
+16300000    1.0348992    302.82052   -32.417958   -6556.2178 
+16400000    1.0348992     293.7918    535.15548   -6615.8872 
+16500000    1.0348992     293.4179    -223.1826   -6522.9155 
+16600000    1.0348992    295.41843   -308.97257   -6543.1489 
+16700000    1.0348992    301.63253    248.60667   -6581.9903 
+16800000    1.0348992    294.69312    632.04708   -6546.0335 
+16900000    1.0348992    288.16572   -1072.8435   -6575.0566 
+17000000    1.0348992     303.5743    475.22258   -6472.4318 
+17100000    1.0348992    288.41596    343.23224   -6546.9088 
+17200000    1.0348992    299.36367    83.709143   -6524.3593 
+17300000    1.0348992    287.67386    -1449.193   -6622.9014 
+17400000    1.0348992     301.6811    245.37934   -6572.2639 
+17500000    1.0348992    278.72604   -383.24474   -6567.6367 
+17600000    1.0348992    298.04778    437.20726   -6556.1856 
+17700000    1.0348992    300.35251    -278.2871   -6499.3794 
+17800000    1.0348992    302.60798    562.19659   -6505.5632 
+17900000    1.0348992    295.63197    72.566896   -6572.4131 
+18000000    1.0348992    302.34304   -746.35481   -6502.3745 
+18100000    1.0348992    297.53859    54.782733   -6503.4567 
+18200000    1.0348992    291.15682   -1186.6132   -6543.2175 
+18300000    1.0348992    310.59523   -483.32636   -6490.4924 
+18400000    1.0348992    306.36883    -555.1386   -6534.8178 
+18500000    1.0348992    295.47759    609.06683   -6481.8405 
+18600000    1.0348992    295.89971    99.623147   -6586.2023 
+18700000    1.0348992    313.88597    511.92771   -6564.7219 
+18800000    1.0348992     294.1858    509.51992    -6612.745 
+18900000    1.0348992    304.57483   -401.78108   -6521.1128 
+19000000    1.0348992    294.27687    402.22955   -6591.0466 
+19100000    1.0348992    302.81105   -35.028475    -6533.304 
+19200000    1.0348992     297.4611    110.31421   -6567.8185 
+19300000    1.0348992    309.43011    96.908585   -6611.7794 
+19400000    1.0348992    285.44463   -957.24948   -6543.6072 
+19500000    1.0348992    308.92115   -226.93155   -6532.2675 
+19600000    1.0348992    302.22852    123.87876   -6511.3549 
+19700000    1.0348992    309.80389   -652.27693   -6497.2736 
+19800000    1.0348992    299.09844      719.349   -6513.2995 
+19900000    1.0348992    297.00726    194.02596   -6585.3684 
+20000000    1.0348992    289.65838   -291.74924   -6545.0918 
+20100000    1.0348992    279.79308   -612.32451   -6618.2122 
+20200000    1.0348992    306.80926   -335.30735   -6589.1518 
+20300000    1.0348992    303.77158     468.7422   -6583.9091 
+20400000    1.0348992    296.47276    269.17755   -6622.2617 
+20500000    1.0348992    299.02977   -684.23326   -6536.3316 
+20600000    1.0348992    295.14711   -323.18826    -6553.402 
+20700000    1.0348992    303.45089   -286.26954   -6510.0784 
+20800000    1.0348992    297.21937   -719.13127   -6527.4768 
+20900000    1.0348992    305.80351   -14.546542   -6502.9818 
+21000000    1.0348992    300.81188    344.62521   -6489.9743 
+21100000    1.0348992    293.50361    32.243828   -6563.1361 
+21200000    1.0348992    295.91332   -247.16807   -6529.3584 
+21300000    1.0348992    297.66605   -493.94033   -6504.1628 
+21400000    1.0348992    299.81688   -536.55672   -6516.4215 
+21500000    1.0348992    285.44489   -455.20389   -6578.1353 
+21600000    1.0348992    313.91942   -9.0399529   -6452.5587 
+21700000    1.0348992    299.92419   -205.05399   -6462.8612 
+21800000    1.0348992    300.37768    166.14279    -6476.192 
+21900000    1.0348992    305.33054    339.32402   -6538.2287 
+22000000    1.0348992    289.99574    114.15484   -6584.4778 
+22100000    1.0348992    297.57298    147.87971   -6600.9113 
+22200000    1.0348992    282.92127   -161.05684   -6564.0547 
+22300000    1.0348992    303.91737   -144.27236   -6532.6861 
+22400000    1.0348992    309.07429   -788.58183   -6486.5146 
+22500000    1.0348992    301.48677   -510.72006   -6499.4173 
+22600000    1.0348992    302.96615   -698.85253   -6501.7967 
+22700000    1.0348992    286.08587   -564.74466   -6607.5809 
+22800000    1.0348992     301.9019   -289.19188   -6545.3587 
+22900000    1.0348992    291.53105    137.21735   -6586.7467 
+23000000    1.0348992    293.38345   -796.04072    -6506.584 
+23100000    1.0348992    288.69982    360.13358   -6396.4894 
+23200000    1.0348992    292.04718     814.8713    -6525.238 
+23300000    1.0348992    297.16683   -856.75922   -6585.1992 
+23400000    1.0348992    287.84038    61.393573   -6579.2893 
+23500000    1.0348992    314.30207   -56.900984   -6517.8674 
+23600000    1.0348992    304.85568   -662.39344   -6517.2776 
+23700000    1.0348992    299.21684    279.76598    -6502.935 
+23800000    1.0348992    298.63406    235.64721   -6532.7162 
+23900000    1.0348992    296.25702   -813.35584   -6457.3974 
+24000000    1.0348992     298.1616    10.372611   -6540.1539 
+24100000    1.0348992     300.6566   -725.61646    -6505.382 
+24200000    1.0348992    305.83817    1039.1013   -6459.4181 
+24300000    1.0348992    293.14355    740.87908   -6619.4966 
+24400000    1.0348992    294.74792    96.256791   -6520.3654 
+24500000    1.0348992    309.71339   -310.82492   -6568.1569 
+24600000    1.0348992    312.85589    22.575117   -6515.3277 
+24700000    1.0348992    296.99664  -0.96305608   -6593.7566 
+24800000    1.0348992    300.28852   -779.87032   -6509.9309 
+24900000    1.0348992    297.55973   -269.33189   -6568.1706 
+25000000    1.0348992    296.98635    97.269707   -6516.9999 
+25100000    1.0348992    285.31327   -28.337418   -6580.3243 
+25200000    1.0348992    295.33853    665.10403   -6545.5706 
+25300000    1.0348992    306.22907    557.36598   -6478.9148 
+25400000    1.0348992     298.1065    26.936031   -6561.7401 
+25500000    1.0348992    289.68719    777.16706   -6556.8771 
+25600000    1.0348992    319.38702    186.00093   -6493.9969 
+25700000    1.0348992     299.6564    -276.8718   -6521.6335 
+25800000    1.0348992    299.99626   -783.79386   -6510.9147 
+25900000    1.0348992    295.41677   -246.91293    -6577.076 
+26000000    1.0348992     294.5778    -244.5726   -6557.0636 
+26100000    1.0348992    302.98188    359.42325   -6497.7978 
+26200000    1.0348992    295.09703    409.39399   -6575.4505 
+26300000    1.0348992    291.60327   -234.03347   -6550.2353 
+26400000    1.0348992    300.65445    23.511418   -6525.7995 
+26500000    1.0348992    295.59442    806.89849    -6578.006 
+26600000    1.0348992    290.60094    35.351113   -6564.9803 
+26700000    1.0348992    296.46567    815.10603   -6552.5108 
+26800000    1.0348992    292.69316   -221.93516   -6533.2827 
+26900000    1.0348992    295.68604    550.13904   -6575.3953 
+27000000    1.0348992    301.16693    321.21906    -6523.639 
+27100000    1.0348992    300.36068    905.38969   -6519.0328 
+27200000    1.0348992    298.24635    1005.8452   -6566.2377 
+27300000    1.0348992    307.54539   -401.09646   -6494.0431 
+27400000    1.0348992    303.70956   -790.85863   -6533.4488 
+27500000    1.0348992    292.66552   -445.47621   -6591.8503 
+27600000    1.0348992    299.34217    -685.2308   -6538.5586 
+27700000    1.0348992    285.88623    234.21728   -6586.3652 
+27800000    1.0348992    294.64958   -291.34783    -6480.414 
+27900000    1.0348992    296.91985    682.84747   -6443.0014 
+28000000    1.0348992    312.75068    929.21803    -6510.391 
+28100000    1.0348992    310.29029   -70.251229   -6417.1016 
+28200000    1.0348992    293.56627     394.0513    -6568.433 
+28300000    1.0348992    296.81438    902.84186   -6503.6789 
+28400000    1.0348992    301.62151    168.81398   -6465.2157 
+28500000    1.0348992    290.53926   -358.54109   -6556.5708 
+28600000    1.0348992    297.20327   -718.54334   -6557.0181 
+28700000    1.0348992    290.71321   -157.34042   -6534.4289 
+28800000    1.0348992    297.96495     620.4414   -6505.7908 
+28900000    1.0348992    308.78693    391.53526   -6498.7333 
+29000000    1.0348992    296.09787   -762.66015    -6519.174 
+29100000    1.0348992    298.52126   -659.15484   -6554.6234 
+29200000    1.0348992     304.4714    -342.4994    -6476.204 
+29300000    1.0348992    303.47465    48.055586   -6552.4663 
+29400000    1.0348992     300.8906   -311.75069   -6569.7624 
+29500000    1.0348992    305.61187   -433.59139   -6559.8418 
+29600000    1.0348992    303.90957    505.17698   -6492.5418 
+29700000    1.0348992    296.53005    220.03772   -6508.5218 
+29800000    1.0348992    299.59703    25.469853   -6549.7574 
+29900000    1.0348992     301.4913    308.15772   -6579.6596 
+30000000    1.0348992    294.41639    183.13348    -6532.755 
+30100000    1.0348992    276.71245     489.0874   -6560.1031 
+30200000    1.0348992    295.60622   -30.658933   -6563.6842 
+30300000    1.0348992    304.81704    149.20829   -6503.5154 
+30400000    1.0348992    292.29443   -752.98155   -6495.5326 
+30500000    1.0348992    304.66946   -513.45382   -6558.1407 
+30600000    1.0348992    300.75673     -705.967   -6492.4382 
+30700000    1.0348992    293.46075   -208.38582    -6500.128 
+30800000    1.0348992    298.28757   -205.96519   -6530.3069 
+30900000    1.0348992    296.14157    281.30368   -6541.2148 
+31000000    1.0348992    301.27128   -1163.8842   -6506.7615 
+31100000    1.0348992    299.46846   -676.97087   -6569.2039 
+31200000    1.0348992    294.51539   -641.58398   -6551.0434 
+31300000    1.0348992     286.3488   -442.96531   -6508.2553 
+31400000    1.0348992    308.24299    652.96171   -6509.5954 
+31500000    1.0348992    299.70831   -367.74027   -6548.4182 
+31600000    1.0348992    296.07828    208.01527   -6562.3832 
+31700000    1.0348992    310.33726   -201.69565   -6468.8856 
+31800000    1.0348992    286.00336    1110.2014   -6587.9418 
+31900000    1.0348992    308.19102    515.98205   -6537.7344 
+32000000    1.0348992    292.28402    547.44131   -6573.9277 
+32100000    1.0348992    299.97644   -196.73013   -6483.8101 
+32200000    1.0348992    296.36112    368.88889   -6514.2168 
+32300000    1.0348992    296.11394    333.85152   -6507.9814 
+32400000    1.0348992    288.15326   -367.11855   -6585.5237 
+32500000    1.0348992    302.68941    55.804785   -6555.6319 
+32600000    1.0348992    298.25089    25.967789   -6514.7257 
+32700000    1.0348992     300.2569   -375.25691   -6487.4868 
+32800000    1.0348992     305.3881   -290.18933   -6487.5086 
+32900000    1.0348992    294.44139   -506.25045   -6530.0623 
+33000000    1.0348992    304.75663    878.76691   -6535.0987 
+33100000    1.0348992    296.21081   -81.078817    -6531.296 
+33200000    1.0348992    293.70103     334.8877   -6522.7582 
+33300000    1.0348992      310.076   -480.64809   -6465.6966 
+33400000    1.0348992     291.9271   -931.39932   -6588.5144 
+33500000    1.0348992     294.1875    -322.2416   -6564.5893 
+33600000    1.0348992     293.8282    87.240214   -6554.9578 
+33700000    1.0348992    291.60884    468.81698   -6487.1026 
+33800000    1.0348992    287.53266    471.72929   -6511.8974 
+33900000    1.0348992    287.13086   -1023.9992   -6585.8443 
+34000000    1.0348992    302.77261   -370.75491    -6524.366 
+34100000    1.0348992    302.96701   -867.62832   -6523.1357 
+34200000    1.0348992    277.63056   -796.63487   -6651.1278 
+34300000    1.0348992       294.56   -41.415398   -6592.3818 
+34400000    1.0348992    301.32698    503.43214   -6558.9154 
+34500000    1.0348992    292.16715    -474.8822   -6606.9922 
+34600000    1.0348992    291.09362    543.53668   -6597.0225 
+34700000    1.0348992    300.10381    316.21333   -6485.9015 
+34800000    1.0348992    302.83102   -231.00141   -6535.9446 
+34900000    1.0348992    296.53201   -158.42734   -6553.9592 
+35000000    1.0348992    316.07066      47.3691   -6513.9135 
+35100000    1.0348992    304.08756   -381.27413   -6507.8355 
+35200000    1.0348992    293.30155    57.112395   -6537.1227 
+35300000    1.0348992    289.20393    420.30714   -6594.0096 
+35400000    1.0348992    303.37287     605.0508    -6543.342 
+35500000    1.0348992    303.25133      621.414    -6539.072 
+35600000    1.0348992    302.80091   -116.44714   -6509.0724 
+35700000    1.0348992    316.93728    1166.6688   -6430.2766 
+35800000    1.0348992    298.40222   -136.46663   -6508.2058 
+35900000    1.0348992    298.55064   -638.88867   -6559.9381 
+36000000    1.0348992    299.61315   -322.68254   -6541.6123 
+36100000    1.0348992    294.23233    1.1012292   -6591.2522 
+36200000    1.0348992    302.07227   -382.22318   -6557.0509 
+36300000    1.0348992    299.19244   -269.09414   -6517.1895 
+36400000    1.0348992    301.81065   -119.59012   -6521.8681 
+36500000    1.0348992    298.10736    877.76843   -6544.1017 
+36600000    1.0348992     292.1912   -420.73254   -6577.9292 
+36700000    1.0348992    295.19187   -464.39692   -6534.0963 
+36800000    1.0348992    301.89104   -451.68037   -6494.6127 
+36900000    1.0348992    290.44711    568.70118   -6559.4398 
+37000000    1.0348992    299.47724    -267.7791   -6508.6828 
+37100000    1.0348992    292.96012   -415.60679   -6551.3247 
+37200000    1.0348992    293.29173    1248.6145   -6534.5448 
+37300000    1.0348992    303.40444    356.87661   -6553.4418 
+37400000    1.0348992    290.65023    926.29699   -6592.9163 
+37500000    1.0348992    279.98068   -558.71648   -6632.3486 
+37600000    1.0348992    291.27364    756.66598   -6636.2103 
+37700000    1.0348992    301.38302   -172.39387   -6415.6458 
+37800000    1.0348992    298.71023    1030.2529   -6567.0149 
+37900000    1.0348992    304.89787   -474.83398   -6476.8492 
+38000000    1.0348992     304.6754    119.10567   -6551.6678 
+38100000    1.0348992    298.77843    202.54015    -6542.585 
+38200000    1.0348992    308.36831    91.826999   -6545.1557 
+38300000    1.0348992     286.7423   -733.91002   -6667.5076 
+38400000    1.0348992    297.68128   -203.08406   -6601.6949 
+38500000    1.0348992    284.62293     329.6234   -6575.9907 
+38600000    1.0348992    299.22008   -358.03954   -6523.1353 
+38700000    1.0348992    303.69389   -692.87041   -6470.6763 
+38800000    1.0348992    283.80835   -93.318745   -6588.3518 
+38900000    1.0348992    295.22248     636.8322   -6607.0043 
+39000000    1.0348992    295.68165   -383.04473     -6519.06 
+39100000    1.0348992    301.90604   -151.94457   -6511.3621 
+39200000    1.0348992    304.27963   -65.816298   -6500.0453 
+39300000    1.0348992    291.44249    63.226817   -6581.6027 
+39400000    1.0348992    297.23143    227.23275   -6597.6758 
+39500000    1.0348992    296.23303    82.969551   -6555.5512 
+39600000    1.0348992    293.37714   -17.786866   -6564.9412 
+39700000    1.0348992    301.76815    2.9671683   -6494.1961 
+39800000    1.0348992    293.05105    1399.0797   -6574.7565 
+39900000    1.0348992    295.50528    -138.6675   -6558.1851 
+40000000    1.0348992    297.94306    264.95831   -6542.2169 
+40100000    1.0348992    299.62871    222.34385   -6565.7072 
+40200000    1.0348992     287.3676    243.95154   -6618.5574 
+40300000    1.0348992    291.09451   -513.60964   -6591.2864 
+40400000    1.0348992    291.35552   -1107.3013   -6558.6689 
+40500000    1.0348992    305.70331    409.59125   -6533.1574 
+40600000    1.0348992     302.4135     40.92101   -6451.5868 
+40700000    1.0348992    297.73316    301.38498   -6524.5256 
+40800000    1.0348992    299.49259   -1049.0814   -6603.1556 
+40900000    1.0348992    304.27877    762.72477   -6553.7208 
+41000000    1.0348992     298.5062    366.51622   -6574.0613 
+41100000    1.0348992    287.42881    362.30118   -6534.0558 
+41200000    1.0348992    291.88923   -536.96186   -6540.5425 
+41300000    1.0348992    305.74971   -331.78772   -6557.0702 
+41400000    1.0348992    302.16473     517.8511   -6426.8011 
+41500000    1.0348992    286.67116    464.68029    -6582.843 
+41600000    1.0348992    304.75039   -755.68058   -6531.5259 
+41700000    1.0348992    299.65732    137.90201   -6516.2965 
+41800000    1.0348992    304.39578   -6.4314928   -6447.0993 
+41900000    1.0348992    304.21238   -127.10005   -6493.3055 
+42000000    1.0348992     300.5676   -395.32888   -6555.9521 
+42100000    1.0348992    295.37795    715.78036   -6545.0546 
+42200000    1.0348992    305.96186   -680.57525   -6508.2932 
+42300000    1.0348992      297.172    159.00937   -6561.8489 
+42400000    1.0348992    301.49041    303.98445    -6478.001 
+42500000    1.0348992    298.33384   -811.43865   -6544.3228 
+42600000    1.0348992    298.03802   -660.33943   -6457.3176 
+42700000    1.0348992     296.4155    104.11701   -6597.9094 
+42800000    1.0348992    302.06183    711.83766   -6502.3708 
+42900000    1.0348992    300.97415    222.12356   -6537.2987 
+43000000    1.0348992    290.16851    778.02054   -6567.1618 
+43100000    1.0348992    286.82385    38.502954   -6661.7301 
+43200000    1.0348992    291.30051    428.91059   -6607.0254 
+43300000    1.0348992    299.31279    1151.6606   -6564.4431 
+43400000    1.0348992    285.99747    592.78428   -6492.4504 
+43500000    1.0348992    307.05224   -889.11449   -6535.2008 
+43600000    1.0348992     288.6009    40.795323   -6562.5015 
+43700000    1.0348992    293.32627   -249.39815   -6537.5739 
+43800000    1.0348992    288.56225   -391.17694   -6540.0114 
+43900000    1.0348992    298.49403    70.264624   -6581.7251 
+44000000    1.0348992    308.50553    82.024318   -6530.5513 
+44100000    1.0348992    298.70385    183.41591   -6567.2052 
+44200000    1.0348992     308.3158    926.61849   -6539.6027 
+44300000    1.0348992    304.45075    352.78071    -6443.778 
+44400000    1.0348992     316.6277   -251.74912   -6518.4836 
+44500000    1.0348992     290.0864    702.86053   -6548.1735 
+44600000    1.0348992    308.68489   -20.709542   -6567.3613 
+44700000    1.0348992    296.43023   -266.74772   -6523.3335 
+44800000    1.0348992    307.44835   -402.36763   -6610.9119 
+44900000    1.0348992    290.71073    289.20702   -6505.5754 
+45000000    1.0348992    310.27319    186.69543   -6451.8386 
+45100000    1.0348992    304.09976    290.65204   -6467.7219 
+45200000    1.0348992    277.17565   -936.39881   -6627.7307 
+45300000    1.0348992    301.40699    39.437143   -6553.6851 
+45400000    1.0348992    300.73991   -111.89919   -6530.1297 
+45500000    1.0348992    298.55062   -464.86587   -6561.0742 
+45600000    1.0348992    303.46276    1369.8661   -6530.0581 
+45700000    1.0348992    286.51812   -527.38863   -6621.3372 
+45800000    1.0348992    299.16048    394.44137   -6478.9612 
+45900000    1.0348992    318.03357    580.70013   -6413.7266 
+46000000    1.0348992    284.95395    497.14749   -6561.1588 
+46100000    1.0348992    294.89933   -414.42571   -6539.5521 
+46200000    1.0348992    300.75934     1787.785   -6559.0867 
+46300000    1.0348992    282.64197   -626.14151   -6625.0676 
+46400000    1.0348992    288.90442   -253.58506   -6551.3819 
+46500000    1.0348992    286.57378     470.3312   -6571.0726 
+46600000    1.0348992    292.94103   -752.53034    -6569.569 
+46700000    1.0348992    294.22726   -554.70079   -6486.6173 
+46800000    1.0348992    309.50171    71.139534   -6501.1825 
+46900000    1.0348992    302.36922   -204.06527   -6509.3687 
+47000000    1.0348992    294.97991   -1044.6979   -6546.4538 
+47100000    1.0348992    291.46835    217.82372   -6566.1214 
+47200000    1.0348992    284.74398   -41.853541   -6556.5916 
+47300000    1.0348992    299.54166   -210.70538   -6502.9097 
+47400000    1.0348992      295.741   -370.63512   -6513.1093 
+47500000    1.0348992    288.82313   -133.79818   -6580.3695 
+47600000    1.0348992    292.18652     -229.172   -6532.3591 
+47700000    1.0348992    300.12872   -34.601786   -6646.1701 
+47800000    1.0348992    310.49396    1416.8407    -6528.142 
+47900000    1.0348992    298.58519     623.5617   -6592.8928 
+48000000    1.0348992    294.09007    342.75862   -6595.8546 
+48100000    1.0348992    306.06083    -150.7368   -6518.9598 
+48200000    1.0348992    288.54367   -236.41572   -6630.4231 
+48300000    1.0348992    308.60153   -304.33555   -6517.0581 
+48400000    1.0348992    301.29702   -359.27914   -6508.4807 
+48500000    1.0348992    309.67538   -940.41297   -6484.8935 
+48600000    1.0348992    294.36398    326.51788   -6489.0201 
+48700000    1.0348992    305.85896    357.28807   -6482.4207 
+48800000    1.0348992    307.78462   -585.35081   -6570.8754 
+48900000    1.0348992    301.76693    417.25784   -6553.5541 
+49000000    1.0348992    295.03015   -190.23855   -6549.9642 
+49100000    1.0348992    298.17939    242.39852   -6516.6842 
+49200000    1.0348992    297.82097   -567.24674   -6529.8986 
+49300000    1.0348992    291.38509   -522.28533   -6515.0462 
+49400000    1.0348992     292.6647   -139.79361   -6514.9922 
+49500000    1.0348992    297.16296    37.810904   -6599.8876 
+49600000    1.0348992    299.44963   -161.55029   -6538.9634 
+49700000    1.0348992    297.58583   -495.30081   -6481.6315 
+49800000    1.0348992    303.05434    124.24828    -6479.551 
+49900000    1.0348992    302.84871    110.66848   -6569.2425 
+50000000    1.0348992    293.87205  -0.16322071   -6489.9986 
+50100000    1.0348992    311.71778   -398.97109   -6460.4881 
+50200000    1.0348992    286.86699    144.70397   -6633.6177 
+50300000    1.0348992    306.20156    266.95471   -6486.1299 
+50400000    1.0348992    314.04302   -613.47119   -6514.2107 
+50500000    1.0348992    288.52216    102.47736   -6520.0289 
+50600000    1.0348992    303.85088    196.11004   -6572.8986 
+50700000    1.0348992    310.11219    501.58676   -6447.1887 
+50800000    1.0348992    305.10946    304.40307   -6510.8638 
+50900000    1.0348992    306.16716   -1303.7814   -6515.7461 
+51000000    1.0348992    308.00322    68.968398   -6479.7632 
+51100000    1.0348992    294.48942   -525.36886   -6556.5729 
+51200000    1.0348992    303.73725    756.72031   -6540.5124 
+51300000    1.0348992    313.84692      321.197    -6563.991 
+51400000    1.0348992    305.57264    376.44876   -6457.8515 
+51500000    1.0348992    305.52028    359.76595   -6455.9641 
+51600000    1.0348992    298.08165   -332.47565   -6505.3089 
+51700000    1.0348992    303.07881    -40.45187   -6470.0006 
+51800000    1.0348992    291.30122    438.36431   -6569.1977 
+51900000    1.0348992    300.61918     532.9217   -6594.0823 
+52000000    1.0348992    297.85974   -502.45024   -6575.5493 
+52100000    1.0348992    294.15918   -54.972771   -6568.7107 
+52200000    1.0348992    308.26883   -63.576213   -6602.1499 
+52300000    1.0348992    301.80242    821.13697   -6480.4029 
+52400000    1.0348992    293.73806   -1058.8598   -6520.9514 
+52500000    1.0348992    308.03149    87.162675   -6485.7376 
+52600000    1.0348992     291.0235    36.664352   -6586.0739 
+52700000    1.0348992    291.79773   -609.10594   -6547.3013 
+52800000    1.0348992    284.53378   -234.52267   -6584.9481 
+52900000    1.0348992    295.44089     460.2192   -6537.4577 
+53000000    1.0348992    292.13437   -462.69509   -6610.6618 
+53100000    1.0348992    293.69121    154.49982   -6504.2987 
+53200000    1.0348992     289.8108   -389.99531   -6591.3087 
+53300000    1.0348992    299.95911    -374.8764   -6593.4604 
+53400000    1.0348992    305.42452   -133.96934   -6494.5247 
+53500000    1.0348992    305.02518    968.20741   -6472.8794 
+53600000    1.0348992    298.51356   -428.76602   -6525.8838 
+53700000    1.0348992    299.68707   -1230.7073   -6534.1163 
+53800000    1.0348992    299.98512    72.893175   -6529.7991 
+53900000    1.0348992    297.05933   -30.188549   -6488.7369 
+54000000    1.0348992    297.01318   -493.71667    -6566.408 
+54100000    1.0348992    283.27333    678.79681   -6584.6562 
+54200000    1.0348992    303.23849   -127.17363   -6500.2709 
+54300000    1.0348992     295.6541   -679.06395   -6518.0144 
+54400000    1.0348992    307.18121    8.4062228   -6479.2636 
+54500000    1.0348992    304.34768    410.09893   -6501.7188 
+54600000    1.0348992    298.09382    362.16302   -6527.4823 
+54700000    1.0348992    296.70901    1282.6086    -6480.475 
+54800000    1.0348992    315.76624   -301.85409   -6518.8095 
+54900000    1.0348992    298.97747    438.44451   -6555.0774 
+55000000    1.0348992    301.42662   -344.56373   -6502.3221 
+55100000    1.0348992      314.892    -630.6446   -6483.6598 
+55200000    1.0348992    297.99219   -97.696675   -6513.4507 
+55300000    1.0348992    292.59559    180.62442   -6568.3421 
+55400000    1.0348992    312.84187    1077.7763   -6508.3801 
+55500000    1.0348992    292.75022    30.471945   -6591.6834 
+55600000    1.0348992     290.0865   -47.556607   -6591.8128 
+55700000    1.0348992    301.44918   -80.852499   -6490.5436 
+55800000    1.0348992     291.9027    368.29744    -6570.286 
+55900000    1.0348992    301.08051    518.08415   -6589.4715 
+56000000    1.0348992    309.78809   -803.42287   -6595.2118 
+56100000    1.0348992    304.33415    410.89994   -6597.8537 
+56200000    1.0348992    304.88124   -65.033125   -6484.3366 
+56300000    1.0348992    296.23083   -232.55021    -6559.423 
+56400000    1.0348992    290.87373    501.47684    -6495.889 
+56500000    1.0348992    303.41722     168.5294   -6473.6433 
+56600000    1.0348992    291.31456    105.01034   -6584.3009 
+56700000    1.0348992    308.82017    156.01552   -6503.5691 
+56800000    1.0348992    293.71302   -412.19451   -6501.5425 
+56900000    1.0348992    287.89644    816.88451   -6607.1883 
+57000000    1.0348992    301.78594   -138.84841   -6505.7357 
+57100000    1.0348992    305.86179     137.5821   -6474.0102 
+57200000    1.0348992    302.54764   -11.721568   -6583.7345 
+57300000    1.0348992    293.15217   -181.50545   -6498.7941 
+57400000    1.0348992    286.24274    311.33472   -6555.4931 
+57500000    1.0348992    291.83834   -675.23628     -6588.88 
+57600000    1.0348992     291.8803    -302.7734   -6516.9619 
+57700000    1.0348992    294.66024    176.01093   -6606.3362 
+57800000    1.0348992    303.03784   -809.07056   -6496.3337 
+57900000    1.0348992    285.60344   -125.43587   -6553.5109 
+58000000    1.0348992    296.18277    620.32459   -6571.3297 
+58100000    1.0348992    299.58316   -93.140342   -6548.6953 
+58200000    1.0348992    287.72989   -320.66309   -6597.7037 
+58300000    1.0348992    296.19461    445.44896   -6567.5854 
+58400000    1.0348992    301.77566   -368.54616   -6522.8501 
+58500000    1.0348992    296.25526   -1088.5762   -6568.1333 
+58600000    1.0348992    304.16055    -517.6983    -6567.952 
+58700000    1.0348992    298.09442    453.59309   -6556.1523 
+58800000    1.0348992    301.19912   -599.06666   -6505.5775 
+58900000    1.0348992    305.36933    241.85973   -6488.5635 
+59000000    1.0348992    303.83236    113.69813   -6536.3451 
+59100000    1.0348992    300.69791    158.62742   -6528.9821 
+59200000    1.0348992    302.77471    59.389546   -6482.9403 
+59300000    1.0348992    310.01862    -721.0884   -6427.9122 
+59400000    1.0348992    298.19516    702.57707   -6545.5042 
+59500000    1.0348992     298.7188    1428.5995   -6539.7047 
+59600000    1.0348992    296.73886    250.09361   -6574.8754 
+59700000    1.0348992    294.25626   -801.05809   -6587.7572 
+59800000    1.0348992     312.7347   -222.99358    -6439.518 
+59900000    1.0348992    299.80986   -458.14801   -6551.4404 
+60000000    1.0348992    302.73948   -602.05663   -6635.7462 
+60100000    1.0348992    301.30334   -1791.8934   -6475.6285 
+60200000    1.0348992     298.6494   -326.04655     -6560.12 
+60300000    1.0348992    311.57219    511.87727   -6547.9752 
+60400000    1.0348992     292.5165   -95.536594   -6534.4505 
+60500000    1.0348992    299.46282   -173.62776   -6483.4857 
+60600000    1.0348992    298.77218   -852.32495   -6501.9381 
+60700000    1.0348992    298.91949   -175.18349   -6472.6531 
+60800000    1.0348992    295.79429   -108.72531   -6575.1554 
+60900000    1.0348992    288.92002   -114.28215   -6614.1359 
+61000000    1.0348992    294.07343    196.65978   -6521.5893 
+61100000    1.0348992    295.33342   -36.886361   -6527.8502 
+61200000    1.0348992    313.11551   -75.315941   -6481.9909 
+61300000    1.0348992    308.10749    176.95735   -6511.5554 
+61400000    1.0348992    301.04796   -388.67204    -6491.322 
+61500000    1.0348992    292.20725   -279.07084   -6561.4289 
+61600000    1.0348992    288.36058   -33.085521   -6588.6282 
+61700000    1.0348992    291.39388    225.65335   -6534.7688 
+61800000    1.0348992    299.48576    95.011122   -6582.5995 
+61900000    1.0348992    291.23851    146.33499   -6574.9259 
+62000000    1.0348992    285.83389   -69.754041   -6560.1083 
+62100000    1.0348992    297.21142   -444.70217   -6538.7475 
+62200000    1.0348992    294.07354    139.23069   -6546.6256 
+62300000    1.0348992    300.17225    374.86259    -6524.574 
+62400000    1.0348992    296.84226   -810.55639    -6562.842 
+62500000    1.0348992     299.3967   -116.49722   -6510.4606 
+62600000    1.0348992    302.95613    -273.5363   -6600.2356 
+62700000    1.0348992    274.56334    -194.8196   -6595.8304 
+62800000    1.0348992    300.95508   -587.86693   -6523.7327 
+62900000    1.0348992    287.07026    68.889565   -6492.3951 
+63000000    1.0348992    299.18458    401.41373   -6573.0045 
+63100000    1.0348992    298.03292   -104.46569   -6542.6913 
+63200000    1.0348992    292.44277    87.258047   -6558.0069 
+63300000    1.0348992     298.7581    238.66277   -6551.7473 
+63400000    1.0348992    298.69427    916.02365   -6460.3531 
+63500000    1.0348992    290.26711   -916.58106   -6538.8719 
+63600000    1.0348992    294.79049   -172.84079   -6506.9743 
+63700000    1.0348992    301.80639    1018.4889   -6503.9381 
+63800000    1.0348992    311.72865   -468.53933   -6441.8352 
+63900000    1.0348992    297.37109   -764.65897   -6531.2168 
+64000000    1.0348992    299.36106    713.58231   -6568.5966 
+64100000    1.0348992    301.55399    284.23215   -6509.4488 
+64200000    1.0348992    297.51442   -32.602076   -6596.2948 
+64300000    1.0348992    306.59009   -6.8428764   -6479.5219 
+64400000    1.0348992    293.36775    156.50445   -6526.5399 
+64500000    1.0348992     294.6275    467.47763   -6521.3972 
+64600000    1.0348992    293.77052    930.63484   -6529.5324 
+64700000    1.0348992    307.08268    83.721459   -6511.3378 
+64800000    1.0348992    293.16217   -225.26318   -6572.7468 
+64900000    1.0348992    302.95673    1188.2243   -6550.7091 
+65000000    1.0348992    323.33853    232.10747   -6434.0806 
+65100000    1.0348992    305.95269   -193.29829   -6540.9115 
+65200000    1.0348992    298.26572    618.13963   -6523.3874 
+65300000    1.0348992    293.73542    468.75898    -6611.871 
+65400000    1.0348992    294.40278    199.49044   -6556.3481 
+65500000    1.0348992    296.38322    1064.7946   -6594.8497 
+65600000    1.0348992    300.78712    723.13482   -6507.2358 
+65700000    1.0348992    292.14878    416.08182     -6566.82 
+65800000    1.0348992    287.49788    483.00574    -6494.996 
+65900000    1.0348992    298.99858    288.44262   -6502.2275 
+66000000    1.0348992    306.73647    -535.1295   -6536.5752 
+66100000    1.0348992    280.82087   -675.05432   -6680.7175 
+66200000    1.0348992    300.81041   -356.17332   -6518.7753 
+66300000    1.0348992    297.66793    580.59092    -6520.133 
+66400000    1.0348992    296.40097   -232.23344   -6512.2475 
+66500000    1.0348992    298.00101   -173.96802   -6577.3926 
+66600000    1.0348992    296.42925   -271.24626   -6539.2988 
+66700000    1.0348992    299.41392    155.91099   -6501.0996 
+66800000    1.0348992     302.2884   -1142.7795    -6605.005 
+66900000    1.0348992    292.63486    451.90493   -6525.9302 
+67000000    1.0348992    309.56573    324.63757   -6466.6076 
+67100000    1.0348992     300.9713   -244.73679   -6468.5499 
+67200000    1.0348992    284.45907   -234.48317   -6577.0091 
+67300000    1.0348992    301.59572    118.19248   -6520.2474 
+67400000    1.0348992    295.73575    36.251202   -6564.5985 
+67500000    1.0348992    303.77566   -1314.2243   -6480.4351 
+67600000    1.0348992    291.47671    251.91734   -6584.5891 
+67700000    1.0348992    289.88817    368.40352   -6566.2113 
+67800000    1.0348992    302.90542    557.44088   -6478.9138 
+67900000    1.0348992    297.36759   -22.338814   -6521.8288 
+68000000    1.0348992    301.43796     422.6793   -6483.9015 
+68100000    1.0348992    293.72338    172.30221   -6559.4872 
+68200000    1.0348992    296.98255    128.61473   -6538.5915 
+68300000    1.0348992    278.32626   -511.80168     -6622.49 
+68400000    1.0348992    304.62728    112.34238   -6503.1208 
+68500000    1.0348992       290.53   -756.41544    -6509.696 
+68600000    1.0348992     305.5397   -402.47366     -6524.29 
+68700000    1.0348992    292.22981    -117.4136   -6658.1785 
+68800000    1.0348992    299.52828    161.12369   -6528.8578 
+68900000    1.0348992    281.92574   -373.74046   -6635.2469 
+69000000    1.0348992    295.55618   -212.04236    -6547.525 
+69100000    1.0348992    309.12474   -487.59133   -6496.0691 
+69200000    1.0348992    288.88593   -442.02839   -6473.5747 
+69300000    1.0348992    296.05572   -301.14395   -6630.5238 
+69400000    1.0348992    283.54036   -111.10962   -6642.6807 
+69500000    1.0348992     295.8188   -63.149611   -6599.5983 
+69600000    1.0348992    294.52502   -718.33866   -6566.0576 
+69700000    1.0348992    293.20435    163.29975   -6530.3875 
+69800000    1.0348992     294.0083   -307.51425   -6522.2596 
+69900000    1.0348992    303.12512   -361.41526   -6538.1772 
+70000000    1.0348992    294.35532   -152.29253   -6567.7413 
+70100000    1.0348992    288.61359   -283.31928   -6576.1483 
+70200000    1.0348992    286.91554   -231.93397   -6618.7392 
+70300000    1.0348992    296.83994   -852.28974   -6539.8711 
+70400000    1.0348992    286.00908   -633.60178     -6533.59 
+70500000    1.0348992     299.1689    -366.2551   -6563.0074 
+70600000    1.0348992     295.6974    207.69101   -6616.2304 
+70700000    1.0348992    306.28583   -635.56135   -6497.5822 
+70800000    1.0348992    286.58975    -478.1911   -6609.9038 
+70900000    1.0348992    292.25735   -185.10441   -6566.9483 
+71000000    1.0348992    293.49275    -656.3023   -6608.8847 
+71100000    1.0348992    301.94156   -554.39662   -6591.2086 
+71200000    1.0348992    289.39824     165.6304   -6517.0087 
+71300000    1.0348992     306.2956   -124.53099    -6478.512 
+71400000    1.0348992    305.45268   -226.95296   -6483.0637 
+71500000    1.0348992    303.34041     162.5608   -6555.7842 
+71600000    1.0348992    296.61764   -486.11531   -6480.2077 
+71700000    1.0348992     291.7514   -93.555175   -6516.6287 
+71800000    1.0348992     297.3694   -210.18801   -6546.2675 
+71900000    1.0348992    299.39343    -322.9967    -6535.347 
+72000000    1.0348992    288.38679   -354.77588    -6612.002 
+72100000    1.0348992    284.71414    -1103.926    -6577.325 
+72200000    1.0348992    295.17773    415.15858   -6492.8215 
+72300000    1.0348992    303.32809    265.10587   -6618.4057 
+72400000    1.0348992    305.86135    506.62779   -6516.9538 
+72500000    1.0348992    285.30882   -411.21373   -6534.7715 
+72600000    1.0348992    306.47066     58.13477    -6503.479 
+72700000    1.0348992    306.55697   -604.17338   -6479.4786 
+72800000    1.0348992    301.32892   -222.12384     -6483.83 
+72900000    1.0348992    299.79822   -1110.3453   -6521.2412 
+73000000    1.0348992    305.97905    525.45197   -6530.2208 
+73100000    1.0348992    290.75273    395.53428   -6528.3709 
+73200000    1.0348992    302.66503   -659.75481   -6520.7043 
+73300000    1.0348992    303.06216    289.41818    -6520.884 
+73400000    1.0348992    288.49924   -111.54869   -6653.7591 
+73500000    1.0348992    295.57574    966.97041    -6562.706 
+73600000    1.0348992    286.36905    280.83126     -6583.43 
+73700000    1.0348992    293.72138    347.20364   -6506.4031 
+73800000    1.0348992     310.0041    -185.8424    -6560.439 
+73900000    1.0348992    296.02579    169.46279    -6542.337 
+74000000    1.0348992    299.03496   -974.37878   -6557.2886 
+74100000    1.0348992    298.91604   -560.55129    -6543.119 
+74200000    1.0348992    306.06678   -496.53748   -6603.2477 
+74300000    1.0348992    294.61169    -481.9985   -6500.8054 
+74400000    1.0348992    296.04168    749.36141    -6581.385 
+74500000    1.0348992    295.01266    207.94002   -6583.2775 
+74600000    1.0348992    311.27376    146.62573   -6534.0033 
+74700000    1.0348992    291.05595   -620.53242   -6575.3996 
+74800000    1.0348992    299.18695   -1.5034198   -6501.3929 
+74900000    1.0348992    312.18578   -40.769087   -6510.4048 
+75000000    1.0348992    301.78477   -317.35523   -6560.8388 
+75100000    1.0348992    294.66905    1013.8451   -6538.4006 
+75200000    1.0348992     293.7491    512.18545   -6558.5061 
+75300000    1.0348992    303.42991    76.147866   -6516.1907 
+75400000    1.0348992    286.84987    79.681952   -6580.9087 
+75500000    1.0348992    294.78283    1189.4453   -6575.3801 
+75600000    1.0348992    307.64696    255.16012    -6491.682 
+75700000    1.0348992    292.79388   -403.53046   -6523.9907 
+75800000    1.0348992    295.42987   -300.46065   -6527.4588 
+75900000    1.0348992    284.24478    407.03536   -6630.5948 
+76000000    1.0348992     296.2822    853.15806   -6543.9016 
+76100000    1.0348992    305.72985    -584.0837   -6572.6098 
+76200000    1.0348992    284.28801   -556.70623   -6564.3587 
+76300000    1.0348992    298.33272    94.107355   -6516.4201 
+76400000    1.0348992    303.53943    845.12348   -6506.9433 
+76500000    1.0348992    300.68211    429.29946   -6540.5866 
+76600000    1.0348992     278.4628   -335.97822   -6578.9257 
+76700000    1.0348992    299.03288    711.55976   -6496.3692 
+76800000    1.0348992    291.34057    397.68177   -6609.3718 
+76900000    1.0348992    296.51889    439.56073    -6459.122 
+77000000    1.0348992    304.56396   -191.84619   -6520.3213 
+77100000    1.0348992    308.18635    63.024062   -6435.8032 
+77200000    1.0348992    288.55482    808.79053   -6637.4782 
+77300000    1.0348992    305.56625   -514.64422   -6458.8585 
+77400000    1.0348992    290.77243    394.96136   -6542.3757 
+77500000    1.0348992    285.33122    824.71777   -6616.2796 
+77600000    1.0348992    297.44811     3.172232   -6518.9873 
+77700000    1.0348992    288.05004   -717.95659    -6552.255 
+77800000    1.0348992    299.62905    -209.7232   -6594.4197 
+77900000    1.0348992    306.79006    183.40006   -6454.6273 
+78000000    1.0348992    301.44467    -304.9941   -6546.1396 
+78100000    1.0348992    289.84582   -333.41815   -6554.2965 
+78200000    1.0348992    309.66139    520.64958   -6536.3404 
+78300000    1.0348992    284.60617    385.35844   -6601.4744 
+78400000    1.0348992    293.03335   -26.178589   -6551.4714 
+78500000    1.0348992    288.16293   -679.58794   -6658.5724 
+78600000    1.0348992    305.86981   -116.94435   -6497.4764 
+78700000    1.0348992    300.25919   -225.69057   -6521.1232 
+78800000    1.0348992    298.37788    763.75542   -6508.6773 
+78900000    1.0348992    298.16901    212.87731   -6496.5284 
+79000000    1.0348992    302.77555   -1042.1431   -6569.3629 
+79100000    1.0348992    292.50499   -645.85012   -6622.2458 
+79200000    1.0348992    297.81417   -1020.3227   -6513.1047 
+79300000    1.0348992    307.77726     425.4213   -6495.0115 
+79400000    1.0348992    304.67477    1051.4804   -6555.2578 
+79500000    1.0348992     298.6184    765.59297   -6527.9031 
+79600000    1.0348992    288.66081   -328.15954   -6588.2163 
+79700000    1.0348992     294.6078    442.51549    -6590.307 
+79800000    1.0348992    308.70086    552.42802   -6518.9047 
+79900000    1.0348992    302.12273    791.88456   -6578.4697 
+80000000    1.0348992    305.30535   -328.64276   -6488.4881 
+80100000    1.0348992    293.88557    304.92721   -6606.5217 
+80200000    1.0348992    293.77095   -6.9454099   -6587.0115 
+80300000    1.0348992    296.65839    137.44728   -6508.7231 
+80400000    1.0348992    300.79254   -78.350168   -6534.4795 
+80500000    1.0348992    289.84091    224.46145   -6481.6361 
+80600000    1.0348992    299.92087    912.43772   -6546.2783 
+80700000    1.0348992    307.65937   -782.98823   -6521.7013 
+80800000    1.0348992    297.73698    203.09331   -6433.1885 
+80900000    1.0348992    293.27824   -397.24904    -6540.524 
+81000000    1.0348992     280.3217   -832.28252   -6557.2706 
+81100000    1.0348992    302.65629   -700.51095   -6481.6392 
+81200000    1.0348992    288.88575    304.71727   -6532.5127 
+81300000    1.0348992    300.12399    -249.4857    -6553.074 
+81400000    1.0348992    295.43878    -347.1864    -6576.753 
+81500000    1.0348992    293.04767    26.136281   -6580.5363 
+81600000    1.0348992    303.30214   -56.108349   -6582.2204 
+81700000    1.0348992     301.2626   -67.983777   -6515.8369 
+81800000    1.0348992    293.32848    321.21803   -6563.7331 
+81900000    1.0348992    306.17922   -318.29431   -6535.8941 
+82000000    1.0348992    292.45975    463.28859   -6602.6066 
+82100000    1.0348992    295.11102    139.54509   -6558.2199 
+82200000    1.0348992    301.30426   -714.07348   -6536.6342 
+82300000    1.0348992    297.80288    129.05029   -6522.5349 
+82400000    1.0348992    297.00234    616.78256   -6520.6516 
+82500000    1.0348992    296.44583   -389.43378   -6495.0731 
+82600000    1.0348992    301.64398   -658.55406   -6569.1578 
+82700000    1.0348992    295.24231   -38.520188   -6544.0403 
+82800000    1.0348992    303.85313   -1393.3083   -6551.7054 
+82900000    1.0348992    304.70073   -212.11178   -6491.6047 
+83000000    1.0348992     301.2535   -808.90283   -6536.3359 
+83100000    1.0348992    305.68741    767.47343    -6419.396 
+83200000    1.0348992    301.98287   -141.85471   -6572.9391 
+83300000    1.0348992    296.24377   -85.273041   -6597.8286 
+83400000    1.0348992     305.3828   -550.95652    -6511.605 
+83500000    1.0348992    306.78781   -112.04636   -6519.0237 
+83600000    1.0348992    293.65573    184.89162   -6528.5428 
+83700000    1.0348992    286.09467   -175.81347   -6567.4601 
+83800000    1.0348992    298.56795   -370.57656   -6540.0883 
+83900000    1.0348992    301.67596    638.13579   -6534.1777 
+84000000    1.0348992    304.57422    228.13949   -6513.4258 
+84100000    1.0348992    292.48017    153.09398   -6567.4494 
+84200000    1.0348992    302.01491   -352.98873   -6511.1265 
+84300000    1.0348992     302.6448    288.84926   -6562.7179 
+84400000    1.0348992     311.9227   -86.247479   -6444.3986 
+84500000    1.0348992     302.6053     584.3534   -6457.3342 
+84600000    1.0348992    299.11952   -782.63383   -6589.5739 
+84700000    1.0348992    291.26323   -292.35789   -6624.8923 
+84800000    1.0348992    286.84053    193.64928   -6604.6575 
+84900000    1.0348992    302.94172    633.53025   -6518.2539 
+85000000    1.0348992     289.3289    153.88994   -6596.1115 
+85100000    1.0348992    301.70513   -199.88364   -6544.1348 
+85200000    1.0348992     296.8851   -88.960397   -6587.0173 
+85300000    1.0348992    284.85386   -640.37396   -6602.6603 
+85400000    1.0348992    306.99915   -543.58184    -6477.727 
+85500000    1.0348992    303.90178    432.00816   -6586.3682 
+85600000    1.0348992    312.38476    1674.7235   -6564.8117 
+85700000    1.0348992    302.26594   -417.76853   -6496.7399 
+85800000    1.0348992    304.11926     217.1622    -6458.244 
+85900000    1.0348992    286.56225   -624.84656   -6650.4076 
+86000000    1.0348992    291.89727   -355.91778   -6583.1962 
+86100000    1.0348992     300.1874    26.910735   -6502.6826 
+86200000    1.0348992    304.19643   -1019.3334   -6572.3116 
+86300000    1.0348992    299.91748    861.71795    -6500.005 
+86400000    1.0348992    298.73541   -507.66014   -6566.6629 
+86500000    1.0348992    300.95772    890.29102   -6473.6589 
+86600000    1.0348992    298.41939    106.95263   -6503.3411 
+86700000    1.0348992    305.82816    319.61383   -6522.4655 
+86800000    1.0348992     293.8193    315.85347   -6589.6192 
+86900000    1.0348992    299.47629    196.48011   -6560.2443 
+87000000    1.0348992    304.37792    28.049534   -6514.7309 
+87100000    1.0348992    284.59094    247.94186   -6613.2793 
+87200000    1.0348992     287.7391   -462.39914   -6564.3519 
+87300000    1.0348992     304.9849   -113.30007   -6488.0145 
+87400000    1.0348992    296.43732     34.31858   -6558.4104 
+87500000    1.0348992    301.07805   -308.36378   -6509.7655 
+87600000    1.0348992    299.28269   -342.64323   -6539.5663 
+87700000    1.0348992    309.79448   -105.41452   -6580.2027 
+87800000    1.0348992    297.53958   -274.02842   -6616.5754 
+87900000    1.0348992    299.60429   -197.04767   -6515.4618 
+88000000    1.0348992    301.73999    747.19512    -6569.052 
+88100000    1.0348992    294.16515   -1337.3989   -6535.5931 
+88200000    1.0348992    297.33003    55.705563   -6569.7849 
+88300000    1.0348992    313.49026   -6.1012271   -6526.8637 
+88400000    1.0348992    298.36562   -281.78816   -6521.0422 
+88500000    1.0348992      294.398   -36.484105   -6551.3108 
+88600000    1.0348992    297.87091    186.30898   -6527.0465 
+88700000    1.0348992    300.90152    191.72489   -6552.2754 
+88800000    1.0348992    310.51099    179.71243    -6545.456 
+88900000    1.0348992    292.57427   -675.39581   -6583.8426 
+89000000    1.0348992    299.49679     175.3739   -6471.1932 
+89100000    1.0348992    292.42792    682.80218   -6563.7153 
+89200000    1.0348992    300.11753   -4.8899296   -6531.8455 
+89300000    1.0348992    310.32665     252.3651   -6473.2574 
+89400000    1.0348992    295.72152    351.81153   -6549.4571 
+89500000    1.0348992    298.66854   -596.18072   -6522.8037 
+89600000    1.0348992    306.10384    139.01444   -6553.3082 
+89700000    1.0348992    304.25514    532.93894   -6453.8041 
+89800000    1.0348992    308.13013   -648.38442   -6457.4128 
+89900000    1.0348992    300.40859    348.09219   -6529.0507 
+90000000    1.0348992    301.39285    -563.3688   -6519.3526 
+90100000    1.0348992    289.74203   -373.66831   -6549.6725 
+90200000    1.0348992    301.60983    327.34373   -6472.0558 
+90300000    1.0348992     302.3756   -708.95028   -6548.0008 
+90400000    1.0348992    293.90907   -653.94184   -6531.6005 
+90500000    1.0348992    298.44122   -57.578868   -6577.4099 
+90600000    1.0348992    304.25963   -746.21464   -6443.6687 
+90700000    1.0348992    306.44496    844.67944   -6415.3354 
+90800000    1.0348992    287.43808   -15.457416   -6538.8532 
+90900000    1.0348992    289.28097    214.54307     -6532.11 
+91000000    1.0348992    293.14226   -575.80229   -6600.4989 
+91100000    1.0348992    300.96885    1397.3497   -6544.2003 
+91200000    1.0348992    286.95045    1008.6023   -6591.5315 
+91300000    1.0348992    313.60535   -188.35627   -6431.5648 
+91400000    1.0348992    293.53812   -112.10244   -6552.2771 
+91500000    1.0348992    308.82299   -36.880175   -6466.6772 
+91600000    1.0348992    302.41129    530.34087   -6460.4407 
+91700000    1.0348992    299.34678   -966.95251   -6509.1025 
+91800000    1.0348992    296.81946    536.49563   -6533.6067 
+91900000    1.0348992    305.36353    278.30975   -6455.9907 
+92000000    1.0348992    299.14801    152.26949   -6546.5143 
+92100000    1.0348992    307.33317    22.011575   -6461.0599 
+92200000    1.0348992    300.57636   -306.05572   -6526.3342 
+92300000    1.0348992    301.81886    -39.99552   -6528.1723 
+92400000    1.0348992    296.20417   -872.11679   -6502.1952 
+92500000    1.0348992    309.61597   -575.73001   -6480.7233 
+92600000    1.0348992    286.94367   -334.56946   -6595.8104 
+92700000    1.0348992    313.15398   -946.45071    -6505.159 
+92800000    1.0348992    300.87468    -739.1912   -6515.0235 
+92900000    1.0348992    293.71654     1285.141   -6565.1633 
+93000000    1.0348992    291.50678   -392.90986   -6592.2809 
+93100000    1.0348992    288.66217   -757.38729   -6580.4075 
+93200000    1.0348992    300.19646   -462.12267   -6542.7883 
+93300000    1.0348992     299.2166    188.24312   -6493.3714 
+93400000    1.0348992    302.53337   -1468.3737    -6544.686 
+93500000    1.0348992    306.50003   -603.61401   -6518.2366 
+93600000    1.0348992    310.62484    507.20453   -6463.6304 
+93700000    1.0348992    307.58867    465.25843    -6469.503 
+93800000    1.0348992    306.05602   -584.82843   -6497.1645 
+93900000    1.0348992    293.85785    538.17259   -6605.1221 
+94000000    1.0348992    295.76039     28.69963   -6560.7631 
+94100000    1.0348992    300.63708   -483.86117   -6486.5932 
+94200000    1.0348992     302.2727   -82.092162   -6549.8314 
+94300000    1.0348992    298.43738   -103.95532   -6557.7136 
+94400000    1.0348992     307.1338    833.32027   -6489.5901 
+94500000    1.0348992    298.76416   -556.32425   -6576.3584 
+94600000    1.0348992    290.40667    252.13159   -6587.8603 
+94700000    1.0348992    291.54181   -1096.6156   -6587.0347 
+94800000    1.0348992    288.43632    140.04685   -6595.1235 
+94900000    1.0348992    296.13792    1019.0466   -6574.6756 
+95000000    1.0348992    300.34475   -737.77371   -6484.3865 
+95100000    1.0348992    292.92111    280.70335   -6491.0151 
+95200000    1.0348992    290.50525    143.03895   -6601.0845 
+95300000    1.0348992    302.54975    253.63362   -6575.0189 
+95400000    1.0348992    298.53832    260.73087   -6506.3466 
+95500000    1.0348992    294.58264    836.94588   -6496.5322 
+95600000    1.0348992    300.90827  -0.40577209   -6492.2775 
+95700000    1.0348992    289.88588   -309.65258   -6565.4792 
+95800000    1.0348992    294.98399   -417.87222   -6535.2654 
+95900000    1.0348992    293.24713    258.21186   -6561.1132 
+96000000    1.0348992    305.75127   -232.34902   -6534.7177 
+96100000    1.0348992    304.19532    485.49494   -6537.9883 
+96200000    1.0348992    288.84576   -778.56259    -6590.929 
+96300000    1.0348992    300.60095   -28.535707   -6559.6848 
+96400000    1.0348992    285.28105    568.46943   -6574.6901 
+96500000    1.0348992    296.29751    446.46228   -6562.4395 
+96600000    1.0348992    286.59235   -428.84459   -6582.8848 
+96700000    1.0348992    291.73069   -1288.2035   -6582.6247 
+96800000    1.0348992    283.92795    -28.15792    -6564.609 
+96900000    1.0348992     301.6263   -622.94215   -6461.8631 
+97000000    1.0348992    303.89118    548.93673   -6552.5851 
+97100000    1.0348992    291.40945     338.4064   -6523.9696 
+97200000    1.0348992    298.77741   -1257.5989   -6436.0902 
+97300000    1.0348992    289.15373   -264.52055   -6554.9481 
+97400000    1.0348992    309.63281   -913.56911   -6520.2738 
+97500000    1.0348992    286.19652    29.923416   -6587.6177 
+97600000    1.0348992    298.20078   -539.61892   -6570.9993 
+97700000    1.0348992    298.84543    210.01324   -6525.4653 
+97800000    1.0348992    286.90093    158.01004   -6558.9011 
+97900000    1.0348992    289.73485     462.4677    -6548.877 
+98000000    1.0348992     293.7208    229.06677   -6510.4977 
+98100000    1.0348992    293.93322     172.0835   -6521.2216 
+98200000    1.0348992    311.72847    686.58408    -6543.429 
+98300000    1.0348992    300.53022   -204.65033   -6491.0133 
+98400000    1.0348992    306.61081    297.73978    -6567.172 
+98500000    1.0348992    296.78665    547.40799   -6534.8685 
+98600000    1.0348992     299.7694    419.63768   -6521.7078 
+98700000    1.0348992    295.62734     913.3901   -6583.3312 
+98800000    1.0348992    297.55855   -134.91323   -6493.7353 
+98900000    1.0348992     295.0041   -568.34416    -6538.348 
+99000000    1.0348992    296.70543   -2.9358381   -6549.1802 
+99100000    1.0348992    307.90617   -218.57446    -6522.359 
+99200000    1.0348992    300.77889   -201.76227   -6562.9922 
+99300000    1.0348992     305.3252    73.557097   -6520.2836 
+99400000    1.0348992    284.40929   -553.85058    -6553.489 
+99500000    1.0348992    295.76622    494.87153    -6557.839 
+99600000    1.0348992    299.65733   -550.29549   -6551.5706 
+99700000    1.0348992     311.9787    15.968111   -6528.7002 
+99800000    1.0348992    311.11141   -736.79099   -6542.4861 
+99900000    1.0348992    304.51704     1103.134   -6531.6636 
+100000000    1.0348992    312.50049   -441.66141   -6493.1205 
+Loop time of 93731.8 on 128 procs for 100000000 steps with 1685 atoms
+
+Performance: 184.356 ns/day, 0.130 hours/ns, 1066.874 timesteps/s
+99.2% CPU use with 128 MPI tasks x no OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 14371      | 17738      | 21381      |2259.0 | 18.92
+Bond    | 230.96     | 306.57     | 484.64     | 352.4 |  0.33
+Kspace  | 43420      | 47219      | 50921      |1417.5 | 50.38
+Neigh   | 1837.8     | 1880.3     | 1920.6     |  42.4 |  2.01
+Comm    | 8916.8     | 9852.1     | 10894      | 442.8 | 10.51
+Output  | 39.56      | 47.593     | 49.104     |  22.7 |  0.05
+Modify  | 15046      | 15520      | 15920      | 167.6 | 16.56
+Other   |            | 1169       |            |       |  1.25
+
+Nlocal:    13.1641 ave 19 max 8 min
+Histogram: 7 6 17 25 22 17 10 11 8 5
+Nghost:    2650.7 ave 2702 max 2612 min
+Histogram: 2 8 17 30 29 18 15 7 1 1
+Neighs:    5098.04 ave 8215 max 2664 min
+Histogram: 5 12 27 16 21 17 10 9 7 4
+
+Total # of neighbors = 652549
+Ave neighs/atom = 387.269
+Ave special neighs/atom = 1.97626
+Neighbor list builds = 8114007
+Dangerous builds = 0
+quit

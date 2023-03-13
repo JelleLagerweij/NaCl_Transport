@@ -1,0 +1,16 @@
+#!/bin/bash
+#SBATCH -J NaCl_T_s-298_m_is_1_run_3
+#SBATCH -p thin
+#SBATCH -n 128
+#SBATCH --mem=128G
+#SBATCH --exclusive
+#SBATCH -t 4-00:00:00
+
+module load 2022
+module load OpenMPI/4.1.4-GCC-11.3.0
+
+lmp=~/software/lammps/lammps2018/src/
+srun $lmp/lmp_mpi < simulation.in
+
+wait
+exit 0 
