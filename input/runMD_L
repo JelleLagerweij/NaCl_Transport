@@ -2,7 +2,7 @@
 #SBATCH -J JOB_NAME
 #SBATCH -p thin
 #SBATCH -N 3
-#SBATCH --ntasks-per-node=128
+#SBATCH -n 384
 #SBATCH --mem-per-cpu=2G
 #SBATCH --exclusive
 #SBATCH -t 5-00:00:00
