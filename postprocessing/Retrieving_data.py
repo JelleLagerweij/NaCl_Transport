@@ -71,7 +71,7 @@ def cond_Ons(octp, charges):
     sig_pm = Ons_pm*(co.e**2*charges[0]*charges[1]*N)/(co.k*T*V)
     sig_mm = Ons_mm*(co.e**2*charges[1]**2*N)/(co.k*T*V)
 
-    cond_Ons = sig_pp + 1*sig_pm + sig_mm
+    cond_Ons = sig_pp + 2*sig_pm + sig_mm
     words = 'E conduct Ons/[S/m]'
     octp.results[words] = [cond_Ons.n, cond_Ons.s, len(octp.f_runs)]
 
@@ -143,6 +143,43 @@ for i in range(len(folder)):
     mixture.molarity('Cl')
     mixture.molality('Cl', 'wat', 18.01528)
     mixture.viscosity()
+    mixture.self_diffusivity(YH_correction=False, box_size_check=True)
+    mixture.self_diffusivity(YH_correction=True, box_size_check=True)
+    mixture.onsager_coeff(box_size_check=True)
+
+    # Getting conductivity out of this
+    cond_NE(mixture, [1, -1], YH_correction=False)
+    cond_NE(mixture, [1, -1], YH_correction=True)
+    cond_Ons(mixture, [1, -1])
+
+    mixture.store()
+
+    print(mixture.results['E conduct Ons/[S/m]'])
+    print(mixture.results['E conduct NEYH_cor /[S/m]'])
+
+# Delft_Blue run
+folder = ['../runningD/m_1', '../runningD/m_2'] #, '../runningS/m_4', '../runningS/m_6']
+
+for i in range(len(folder)):
+    f_runs = ['1', '2', '3']  # All internal runs
+    groups = ['wat', 'Na', 'Cl']
+
+    # Load the class
+    mixture = octp.PP_OCTP(folder[i], f_runs, groups, dt=2, plotting=False)
+
+    # Change the file names
+    mixture.filenames(Diff_Onsag='onsagercoefficient.dat',
+                      T_conduc='thermconductivity.dat')
+
+    mixture.changefit(Minc=12, Mmax=45)
+    mixture.pressure(mov_ave=150)
+    mixture.tot_energy(mov_ave=150)
+    mixture.pot_energy(mov_ave=150)
+    mixture.density()
+    mixture.molarity('Cl')
+    mixture.molality('Cl', 'wat', 18.01528)
+    mixture.viscosity()
+    mixture.thermal_conductivity()
     mixture.self_diffusivity(YH_correction=False, box_size_check=True)
     mixture.self_diffusivity(YH_correction=True, box_size_check=True)
     mixture.onsager_coeff(box_size_check=True)
