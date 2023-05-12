@@ -10,16 +10,16 @@ Nrun3=$(expr 100000000)	# dt*Nrun = 200ns of data per run
 Temp=$(expr 298.15)		# Temperature in K
 Press=$(expr 1)			# Pressure in atm
 
-N_wat=$(expr 555)		# Number of water molecules
-N_salt=$(expr 10)		# Number of NaCl's per 1m solution (550 waters)
+N_wat=$(expr 1000)		# Number of water molecules
+N_salt=$(expr 18)		# Number of NaCl's per 1m solution (550 waters)
 
 
-for folder in runningS
+for folder in Parsa
 do
-	mkdir $folder
+	#mkdir $folder
 	cd $folder
 
-	for m in 1 2 4 6
+	for m in 4
 	do
 		mkdir m_$m
 		cd m_$m
@@ -47,9 +47,6 @@ do
 			sed -i 's/Nrun2_VALUE/'$Nrun2'/' simulation.in
 			sed -i 's/Nrun3_VALUE/'$Nrun3'/' simulation.in
 
-			# Set filder location
-			sed -i 's/run_FOLDER/'$i'/' copy_files.sh
-
 			# Set runMD variables
 			sed -i 's/JOB_NAME/NaCl_T_s-'${Temp%.*}'_m_is_'$m'_run_'$i'/' runMD
 			sed -i 's/INPUT/simulation.in/' runMD
@@ -62,11 +59,12 @@ do
 			cp ../../../../input/Cl.xyz .
 			cp ../../../../input/water.xyz .
 
-			# compute total number of Li and SO4
+			# compute total number of Na and Cl
 			N=$(($m*$N_salt))
 
 			# Create initial configuration using fftool and packmol
 			~/software/lammps/la*18/fftool/fftool $N_wat water.xyz $N Na.xyz $N Cl.xyz -r 55 > /dev/null
+			echo "seed -1" >> pack.inp
 			~/software/lammps/la*18/packmol*/packmol < pack.inp > packmol.out
 			~/software/lammps/la*18/fftool/fftool $N_wat water.xyz $N Na.xyz $N Cl.xyz -r 55 -l > /dev/null
 
