@@ -12,13 +12,13 @@ module load 2022
 module load OpenMPI/4.1.4-GCC-11.3.0
 
 # Set to run in Scratch
-mkdir -p /scratch-shared/$USER/JOB_NAME
-cp $HOME/input_file /scratch-shared/$USER/JOB_NAME
+#mkdir -p /scratch-shared/$USER/JOB_NAME
+#cp $HOME/input_file /scratch-shared/$USER/JOB_NAME
   
-cd /scratch-shared/$USER/JOB_NAME
+#cd /scratch-shared/$USER/JOB_NAME
 
 lmp=~/software/lammps/lammps2018/src/
 srun $lmp/lmp_mpi < simulation.in
 
 # Copy output back from scratch to the directory from where the job was submitted
-cp -r output $SLURM_SUBMIT_DIR
+#cp -r output $SLURM_SUBMIT_DIR

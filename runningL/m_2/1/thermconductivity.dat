@@ -1,0 +1,4 @@
+#NOTE: MSDs should be divided by (temperature^2).
+#NOTE: MSDs have been divided by 2.
+#Time	MSD_x	MSD_y	MSD_z	MSD_all
+ 20 0 0 0 0

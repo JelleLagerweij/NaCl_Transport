@@ -1,5 +1,6 @@
 #!/bin/bash
 runfile=$(expr runMD_S)	# Server where to run
+module load 2022
 module load Python/3.10.4-GCCcore-11.3.0  # Otherwise Snellius can't use packmol/fftool
 
 dt=$(expr 2)            # Timestep in fs
@@ -32,7 +33,6 @@ do
 			# Coppying all needed files to run folder (alphabetical order)
 			cp ../../../input/$runfile runMD
 			cp ../../../input/simulation.in .
-			cp ../../../input/copy_files.sh .
 			cp ../../../input/forcefield.data .
 
 
